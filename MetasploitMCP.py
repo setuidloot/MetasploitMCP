@@ -29,11 +29,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("metasploit_mcp_server")
+session_shell_type: Dict[str, str] = {}
 
 # Metasploit Connection Config (from environment variables)
-MSF_PASSWORD = os.environ.get('MSF_PASSWORD', 'yourpassword')
-MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
-MSF_PORT_STR = os.getenv('MSF_PORT', '55553')
+MSF_PASSWORD = os.environ.get('MSF_PASSWORD', 'tiaozhanbei')
+MSF_SERVER = os.getenv('MSF_SERVER', '120.24.89.226')
+MSF_PORT_STR = os.getenv('MSF_PORT', '28739')
 MSF_SSL_STR = os.getenv('MSF_SSL', 'false')
 PAYLOAD_SAVE_DIR = os.environ.get('PAYLOAD_SAVE_DIR', str(pathlib.Path.home() / "payloads"))
 
@@ -1039,6 +1040,9 @@ async def send_session_command(
     Uses session.run_with_output for Meterpreter, and a prompt-aware loop for shells.
     The agent is responsible for parsing the raw output.
 
+    In Meterpreter mode, to run a shell command, run `shell` to enter the shell mode first.
+    To exit shell mode and return to Meterpreter, run `exit`.
+
     Args:
         session_id: ID of the target session.
         command: Command string to execute in the session.
@@ -1073,15 +1077,26 @@ async def send_session_command(
         message = "Command execution failed or type unknown."
 
         if session_type == 'meterpreter':
+            if session_shell_type.get(session_id_str) is None:
+                session_shell_type[session_id_str] = 'meterpreter'
+
             logger.debug(f"Using session.run_with_output for Meterpreter session {session_id}")
             try:
                 # Use asyncio.wait_for to handle timeout manually since run_with_output doesn't support timeout parameter
                 if command == "shell":
-                    output = session.run_with_output(command, end_strs=['created.'])
-                    session.read()  # Clear buffer
+                    if session_shell_type[session_id_str] == 'meterpreter':
+                        output = session.run_with_output(command, end_strs=['created.'])
+                        session_shell_type[session_id_str] = 'shell'
+                        session.read()  # Clear buffer
+                    else:
+                        output = "You are already in shell mode."
                 elif command == "exit":
-                    session.read()  # Clear buffer
-                    session.detach()
+                    if session_shell_type[session_id_str] == 'meterpreter':
+                        output = "You are already in meterpreter mode. No need to exit."
+                    else:
+                        session.read()  # Clear buffer
+                        session.detach()
+                        session_shell_type[session_id_str] = 'meterpreter'
                 else:
                     output = await asyncio.wait_for(
                         asyncio.to_thread(lambda: session.run_with_output(command)),
