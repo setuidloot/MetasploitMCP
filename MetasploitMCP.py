@@ -1076,10 +1076,17 @@ async def send_session_command(
             logger.debug(f"Using session.run_with_output for Meterpreter session {session_id}")
             try:
                 # Use asyncio.wait_for to handle timeout manually since run_with_output doesn't support timeout parameter
-                output = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: session.run_with_output(command)),
-                    timeout=timeout_seconds
-                )
+                if command == "shell":
+                    output = session.run_with_output(command, end_strs=['created.'])
+                    session.read()  # Clear buffer
+                elif command == "exit":
+                    session.read()  # Clear buffer
+                    session.detach()
+                else:
+                    output = await asyncio.wait_for(
+                        asyncio.to_thread(lambda: session.run_with_output(command)),
+                        timeout=timeout_seconds
+                    )
                 status = "success"
                 message = "Meterpreter command executed successfully."
                 logger.debug(f"Meterpreter command '{command}' completed.")
