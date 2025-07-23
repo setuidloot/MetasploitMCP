@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("metasploit_mcp_server")
 
 # Metasploit Connection Config (from environment variables)
-MSF_PASSWORD = os.environ.get('MSF_PASSWORD', 'yourpassword')
+MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'yourpassword')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
 MSF_PORT_STR = os.getenv('MSF_PORT', '55553')
 MSF_SSL_STR = os.getenv('MSF_SSL', 'false')
