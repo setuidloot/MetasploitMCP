@@ -160,6 +160,129 @@ This tool provides direct access to Metasploit Framework capabilities, which inc
 3. Generate a payload: `generate_payload("windows/meterpreter/reverse_tcp", "exe", {"LHOST": "192.168.1.10", "LPORT": 4444})`
 4. Stop a handler: `stop_job(1)`
 
+## Testing
+
+This project includes comprehensive unit and integration tests to ensure reliability and maintainability.
+
+### Prerequisites for Testing
+
+Install test dependencies:
+
+```bash
+pip install -r requirements-test.txt
+```
+
+Or use the convenient installer:
+
+```bash
+python run_tests.py --install-deps
+# OR
+make install-deps
+```
+
+### Running Tests
+
+#### Quick Commands
+
+```bash
+# Run all tests
+python run_tests.py --all
+# OR
+make test
+
+# Run with coverage report
+python run_tests.py --all --coverage
+# OR
+make coverage
+
+# Run with HTML coverage report
+python run_tests.py --all --coverage --html
+# OR
+make coverage-html
+```
+
+#### Specific Test Suites
+
+```bash
+# Unit tests only
+python run_tests.py --unit
+# OR
+make test-unit
+
+# Integration tests only  
+python run_tests.py --integration
+# OR
+make test-integration
+
+# Options parsing tests
+python run_tests.py --options
+# OR
+make test-options
+
+# Helper function tests
+python run_tests.py --helpers
+# OR
+make test-helpers
+
+# MCP tools tests
+python run_tests.py --tools
+# OR
+make test-tools
+```
+
+#### Test Options
+
+```bash
+# Include slow tests
+python run_tests.py --all --slow
+
+# Include network tests (requires actual network)
+python run_tests.py --all --network
+
+# Verbose output
+python run_tests.py --all --verbose
+
+# Quick test (no coverage, fail fast)
+make quick-test
+
+# Debug mode (detailed failure info)
+make test-debug
+```
+
+### Test Structure
+
+- **`tests/test_options_parsing.py`**: Unit tests for the graceful options parsing functionality
+- **`tests/test_helpers.py`**: Unit tests for internal helper functions and MSF client management
+- **`tests/test_tools_integration.py`**: Integration tests for all MCP tools with mocked Metasploit backend
+- **`conftest.py`**: Shared test fixtures and configuration
+- **`pytest.ini`**: Pytest configuration with coverage settings
+
+### Test Features
+
+- **Comprehensive Mocking**: All Metasploit dependencies are mocked, so tests run without requiring an actual MSF installation
+- **Async Support**: Full async/await testing support using pytest-asyncio
+- **Coverage Reporting**: Detailed coverage analysis with HTML reports
+- **Parametrized Tests**: Efficient testing of multiple input scenarios
+- **Fixture Management**: Reusable test fixtures for common setup scenarios
+
+### Coverage Reports
+
+After running tests with coverage, reports are available in:
+
+- **Terminal**: Coverage summary displayed after test run
+- **HTML**: `htmlcov/index.html` (when using `--html` option)
+
+### CI/CD Integration
+
+For continuous integration:
+
+```bash
+# CI-friendly test command
+make ci-test
+# OR
+python run_tests.py --all --coverage --verbose
+```
+
 ## Configuration Options
 
 ### Payload Save Directory

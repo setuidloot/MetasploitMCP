@@ -45,6 +45,7 @@ SESSION_COMMAND_TIMEOUT = 60     # Default for commands within sessions
 SESSION_READ_INACTIVITY_TIMEOUT = 10 # Timeout if no data from session
 EXPLOIT_SESSION_POLL_TIMEOUT = 60 # Max time to wait for session after exploit job
 EXPLOIT_SESSION_POLL_INTERVAL = 2  # How often to check for session
+RPC_CALL_TIMEOUT = 30  # Default timeout for RPC calls like listing modules
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
@@ -73,6 +74,7 @@ def initialize_msf_client() -> MsfRpcClient:
         raise ValueError("Invalid MSF connection parameters") from e
 
     try:
+        logger.debug(f"Attempting to create MsfRpcClient connection to {MSF_SERVER}:{msf_port} (SSL: {msf_ssl})...")
         client = MsfRpcClient(
             password=MSF_PASSWORD,
             server=MSF_SERVER,
@@ -80,6 +82,7 @@ def initialize_msf_client() -> MsfRpcClient:
             ssl=msf_ssl
         )
         # Test connection during initialization
+        logger.debug("Testing connection with core.version call...")
         version_info = client.core.version
         msf_version = version_info.get('version', 'unknown') if isinstance(version_info, dict) else 'unknown'
         logger.info(f"Successfully connected to Metasploit RPC at {MSF_SERVER}:{msf_port} (SSL: {msf_ssl}), version: {msf_version}")
@@ -95,8 +98,60 @@ def initialize_msf_client() -> MsfRpcClient:
 def get_msf_client() -> MsfRpcClient:
     """Gets the initialized MSF client instance, raising an error if not ready."""
     if _msf_client_instance is None:
+        logger.error("Metasploit client has not been initialized. Check MSF server connection.")
         raise ConnectionError("Metasploit client has not been initialized.") # Strict check preferred
+    logger.debug("Retrieved MSF client instance successfully.")
     return _msf_client_instance
+
+async def check_msf_connection() -> Dict[str, Any]:
+    """
+    Check the current status of the Metasploit RPC connection.
+    Returns connection status information for debugging.
+    """
+    try:
+        client = get_msf_client()
+        logger.debug(f"Testing MSF connection with {RPC_CALL_TIMEOUT}s timeout...")
+        version_info = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.core.version),
+            timeout=RPC_CALL_TIMEOUT
+        )
+        msf_version = version_info.get('version', 'N/A') if isinstance(version_info, dict) else 'N/A'
+        return {
+            "status": "connected",
+            "server": f"{MSF_SERVER}:{MSF_PORT_STR}",
+            "ssl": MSF_SSL_STR,
+            "version": msf_version,
+            "message": "Connection to Metasploit RPC is healthy"
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "timeout",
+            "server": f"{MSF_SERVER}:{MSF_PORT_STR}",
+            "ssl": MSF_SSL_STR,
+            "timeout_seconds": RPC_CALL_TIMEOUT,
+            "message": f"Metasploit server not responding within {RPC_CALL_TIMEOUT}s timeout"
+        }
+    except ConnectionError as e:
+        return {
+            "status": "not_initialized",
+            "server": f"{MSF_SERVER}:{MSF_PORT_STR}",
+            "ssl": MSF_SSL_STR,
+            "message": f"Metasploit client not initialized: {e}"
+        }
+    except MsfRpcError as e:
+        return {
+            "status": "rpc_error",
+            "server": f"{MSF_SERVER}:{MSF_PORT_STR}",
+            "ssl": MSF_SSL_STR,
+            "message": f"Metasploit RPC error: {e}"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "server": f"{MSF_SERVER}:{MSF_PORT_STR}",
+            "ssl": MSF_SSL_STR,
+            "message": f"Unexpected error: {e}"
+        }
 
 @contextlib.asynccontextmanager
 async def get_msf_console() -> MsfConsole:
@@ -233,10 +288,106 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         logger.exception(f"Error executing console command '{cmd}'")
         raise RuntimeError(f"Failed executing console command '{cmd}': {e}") from e
 
+from mcp.server.session import ServerSession
+
+####################################################################################
+# Temporary monkeypatch which avoids crashing when a POST message is received
+# before a connection has been initialized, e.g: after a deployment.
+# pylint: disable-next=protected-access
+old__received_request = ServerSession._received_request
+
+
+async def _received_request(self, *args, **kwargs):
+    try:
+        return await old__received_request(self, *args, **kwargs)
+    except RuntimeError:
+        pass
+
+
+# pylint: disable-next=protected-access
+ServerSession._received_request = _received_request
+####################################################################################
+
 # --- MCP Server Initialization ---
 mcp = FastMCP("Metasploit Tools Enhanced (Streamlined)")
 
 # --- Internal Helper Functions ---
+
+def _parse_options_gracefully(options: Union[Dict[str, Any], str, None]) -> Dict[str, Any]:
+    """
+    Gracefully parse options from different formats.
+    
+    Handles:
+    - Dict format (correct): {"key": "value", "key2": "value2"}
+    - String format (common mistake): "key=value,key=value"
+    - None: returns empty dict
+    
+    Args:
+        options: Options in dict format, string format, or None
+        
+    Returns:
+        Dictionary of parsed options
+        
+    Raises:
+        ValueError: If string format is malformed
+    """
+    if options is None:
+        return {}
+    
+    if isinstance(options, dict):
+        # Already correct format
+        return options
+    
+    if isinstance(options, str):
+        # Handle the common mistake format: "key=value,key=value"
+        if not options.strip():
+            return {}
+            
+        logger.info(f"Converting string format options to dict: {options}")
+        parsed_options = {}
+        
+        try:
+            # Split by comma and then by equals
+            pairs = [pair.strip() for pair in options.split(',') if pair.strip()]
+            for pair in pairs:
+                if '=' not in pair:
+                    raise ValueError(f"Invalid option format: '{pair}' (missing '=')")
+                
+                key, value = pair.split('=', 1)  # Split only on first '='
+                key = key.strip()
+                value = value.strip()
+                
+                # Validate key is not empty
+                if not key:
+                    raise ValueError(f"Invalid option format: '{pair}' (empty key)")
+                
+                # Remove quotes if they wrap the entire value
+                if (value.startswith('"') and value.endswith('"')) or \
+                   (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                
+                # Basic type conversion
+                if value.lower() in ('true', 'false'):
+                    value = value.lower() == 'true'
+                elif value.isdigit():
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        pass  # Keep as string if conversion fails
+                
+                parsed_options[key] = value
+            
+            logger.info(f"Successfully converted string options to dict: {parsed_options}")
+            return parsed_options
+            
+        except Exception as e:
+            raise ValueError(f"Failed to parse options string '{options}': {e}. Expected format: 'key=value,key2=value2' or dict {{'key': 'value'}}")
+    
+    # For any other type, try to convert to dict
+    try:
+        return dict(options)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Options must be a dictionary or comma-separated string format 'key=value,key2=value2'. Got {type(options)}: {options}")
 
 async def _get_module_object(module_type: str, module_name: str) -> Any:
     """Gets the MSF module object, handling potential path variations."""
@@ -591,7 +742,12 @@ async def list_exploits(search_term: str = "") -> List[str]:
     client = get_msf_client()
     logger.info(f"Listing exploits (search term: '{search_term or 'None'}')")
     try:
-        exploits = await asyncio.to_thread(lambda: client.modules.exploits)
+        # Add timeout to prevent hanging on slow/unresponsive MSF server
+        logger.debug(f"Calling client.modules.exploits with {RPC_CALL_TIMEOUT}s timeout...")
+        exploits = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.modules.exploits),
+            timeout=RPC_CALL_TIMEOUT
+        )
         logger.debug(f"Retrieved {len(exploits)} total exploits from MSF.")
         if search_term:
             term_lower = search_term.lower()
@@ -604,9 +760,13 @@ async def list_exploits(search_term: str = "") -> List[str]:
             limit = 100
             logger.info(f"No search term provided, returning first {limit} exploits.")
             return exploits[:limit]
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing exploits from Metasploit server. Server may be slow or unresponsive."
+        logger.error(error_msg)
+        return [f"Error: {error_msg}"]
     except MsfRpcError as e:
-        logger.error(f"Failed to list exploits from Metasploit: {e}")
-        return [f"Error: Failed to list exploits: {e}"]
+        logger.error(f"Metasploit RPC error while listing exploits: {e}")
+        return [f"Error: Metasploit RPC error: {e}"]
     except Exception as e:
         logger.exception("Unexpected error listing exploits.")
         return [f"Error: Unexpected error listing exploits: {e}"]
@@ -626,7 +786,12 @@ async def list_payloads(platform: str = "", arch: str = "") -> List[str]:
     client = get_msf_client()
     logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}')")
     try:
-        payloads = await asyncio.to_thread(lambda: client.modules.payloads)
+        # Add timeout to prevent hanging on slow/unresponsive MSF server
+        logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
+        payloads = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.modules.payloads),
+            timeout=RPC_CALL_TIMEOUT
+        )
         logger.debug(f"Retrieved {len(payloads)} total payloads from MSF.")
         filtered = payloads
         if platform:
@@ -642,9 +807,13 @@ async def list_payloads(platform: str = "", arch: str = "") -> List[str]:
         limit = 100
         logger.info(f"Found {count} payloads matching filters. Returning max {limit}.")
         return filtered[:limit]
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing payloads from Metasploit server. Server may be slow or unresponsive."
+        logger.error(error_msg)
+        return [f"Error: {error_msg}"]
     except MsfRpcError as e:
-        logger.error(f"Failed to list payloads from Metasploit: {e}")
-        return [f"Error: Failed to list payloads: {e}"]
+        logger.error(f"Metasploit RPC error while listing payloads: {e}")
+        return [f"Error: Metasploit RPC error: {e}"]
     except Exception as e:
         logger.exception("Unexpected error listing payloads.")
         return [f"Error: Unexpected error listing payloads: {e}"]
@@ -653,7 +822,7 @@ async def list_payloads(platform: str = "", arch: str = "") -> List[str]:
 async def generate_payload(
     payload_type: str,
     format_type: str,
-    options: Dict[str, Any], # Required: e.g., {"LHOST": "1.2.3.4", "LPORT": 4444}
+    options: Union[Dict[str, Any], str], # Required: e.g., {"LHOST": "1.2.3.4", "LPORT": 4444} or "LHOST=1.2.3.4,LPORT=4444"
     encoder: Optional[str] = None,
     iterations: int = 0,
     bad_chars: str = "",
@@ -670,7 +839,8 @@ async def generate_payload(
     Args:
         payload_type: Type of payload (e.g., windows/meterpreter/reverse_tcp).
         format_type: Output format (raw, exe, python, etc.).
-        options: Dictionary of required payload options (e.g., LHOST, LPORT). MUST be provided.
+        options: Dictionary of required payload options (e.g., {"LHOST": "1.2.3.4", "LPORT": 4444})
+                or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
         encoder: Optional encoder to use.
         iterations: Optional number of encoding iterations.
         bad_chars: Optional string of bad characters to avoid (e.g., '\\x00\\x0a\\x0d').
@@ -686,7 +856,13 @@ async def generate_payload(
     client = get_msf_client()
     logger.info(f"Generating payload '{payload_type}' (Format: {format_type}) via RPC. Options: {options}")
 
-    if not options:
+    # Parse options gracefully
+    try:
+        parsed_options = _parse_options_gracefully(options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid options format: {e}"}
+
+    if not parsed_options:
         return {"status": "error", "message": "Payload 'options' dictionary (e.g., LHOST, LPORT) is required."}
 
     try:
@@ -694,7 +870,7 @@ async def generate_payload(
         payload = await _get_module_object('payload', payload_type)
 
         # Set payload-specific required options (like LHOST/LPORT)
-        await _set_module_options(payload, options)
+        await _set_module_options(payload, parsed_options)
 
         # Set payload generation options in payload.runoptions
         # as per the pymetasploit3 documentation
@@ -809,7 +985,7 @@ async def run_exploit(
     module_name: str,
     options: Dict[str, Any],
     payload_name: Optional[str] = None,
-    payload_options: Optional[Dict[str, Any]] = None,
+    payload_options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = False,
     check_vulnerability: bool = False, # New option
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT # Used only if run_as_job=False
@@ -822,7 +998,8 @@ async def run_exploit(
         module_name: Name/path of the exploit module (e.g., 'unix/ftp/vsftpd_234_backdoor').
         options: Dictionary of exploit module options (e.g., {'RHOSTS': '192.168.1.1'}).
         payload_name: Name of the payload (e.g., 'linux/x86/meterpreter/reverse_tcp').
-        payload_options: Dictionary of payload options (e.g., {'LHOST': '...', 'LPORT': ...}).
+        payload_options: Dictionary of payload options (e.g., {'LHOST': '...', 'LPORT': ...})
+                        or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
         run_as_job: If False (default), run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console.
@@ -832,9 +1009,15 @@ async def run_exploit(
     """
     logger.info(f"Request to run exploit '{module_name}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload_name}")
 
+    # Parse payload options gracefully
+    try:
+        parsed_payload_options = _parse_options_gracefully(payload_options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid payload_options format: {e}"}
+
     payload_spec = None
     if payload_name:
-        payload_spec = {"name": payload_name, "options": payload_options or {}}
+        payload_spec = {"name": payload_name, "options": parsed_payload_options}
 
     if check_vulnerability:
         logger.info(f"Performing vulnerability check first for {module_name}...")
@@ -853,6 +1036,9 @@ async def run_exploit(
              is_vulnerable = "appears vulnerable" in output or "is vulnerable" in output or "+ vulnerable" in output
              # Check for negative indicators (more reliable sometimes)
              is_not_vulnerable = "does not appear vulnerable" in output or "is not vulnerable" in output or "target is not vulnerable" in output or "check failed" in output
+             if check_result.get('status') == "errror":
+                 logger.warning(f"Error from metasploit: {check_result}")
+                 return {"status": "aborted", "message": f"Check indicates a failure: {check_result.get('message')}", "check_output": check_result.get("module_output")}
 
              if is_not_vulnerable or (not is_vulnerable and check_result.get("status") == "error"):
                  logger.warning(f"Check indicates target is likely not vulnerable to {module_name}.")
@@ -1013,7 +1199,11 @@ async def list_active_sessions() -> Dict[str, Any]:
     client = get_msf_client()
     logger.info("Listing active Metasploit sessions.")
     try:
-        sessions_dict = await asyncio.to_thread(lambda: client.sessions.list)
+        logger.debug(f"Calling client.sessions.list with {RPC_CALL_TIMEOUT}s timeout...")
+        sessions_dict = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.sessions.list),
+            timeout=RPC_CALL_TIMEOUT
+        )
         if not isinstance(sessions_dict, dict):
             logger.error(f"Expected dict from sessions.list, got {type(sessions_dict)}")
             return {"status": "error", "message": f"Unexpected data type for sessions list: {type(sessions_dict)}"}
@@ -1022,9 +1212,13 @@ async def list_active_sessions() -> Dict[str, Any]:
         # Ensure keys are strings for consistent JSON
         sessions_dict_str_keys = {str(k): v for k, v in sessions_dict.items()}
         return {"status": "success", "sessions": sessions_dict_str_keys, "count": len(sessions_dict_str_keys)}
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing sessions from Metasploit server. Server may be slow or unresponsive."
+        logger.error(error_msg)
+        return {"status": "error", "message": error_msg}
     except MsfRpcError as e:
-        logger.error(f"Failed to list sessions: {e}")
-        return {"status": "error", "message": f"Error listing sessions: {e}"}
+        logger.error(f"Metasploit RPC error while listing sessions: {e}")
+        return {"status": "error", "message": f"Metasploit RPC error: {e}"}
     except Exception as e:
         logger.exception("Unexpected error listing sessions.")
         return {"status": "error", "message": f"Unexpected error listing sessions: {e}"}
@@ -1207,7 +1401,11 @@ async def list_listeners() -> Dict[str, Any]:
     client = get_msf_client()
     logger.info("Listing active listeners/jobs")
     try:
-        jobs = await asyncio.to_thread(lambda: client.jobs.list)
+        logger.debug(f"Calling client.jobs.list with {RPC_CALL_TIMEOUT}s timeout...")
+        jobs = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.jobs.list),
+            timeout=RPC_CALL_TIMEOUT
+        )
         if not isinstance(jobs, dict):
             logger.error(f"Unexpected data type for jobs list: {type(jobs)}")
             return {"status": "error", "message": f"Unexpected data type for jobs list: {type(jobs)}"}
@@ -1252,9 +1450,13 @@ async def list_listeners() -> Dict[str, Any]:
             "total_job_count": len(jobs)
         }
 
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing jobs from Metasploit server. Server may be slow or unresponsive."
+        logger.error(error_msg)
+        return {"status": "error", "message": error_msg}
     except MsfRpcError as e:
-        logger.error(f"Error listing jobs/handlers: {e}")
-        return {"status": "error", "message": f"Error listing jobs: {e}"}
+        logger.error(f"Metasploit RPC error while listing jobs/handlers: {e}")
+        return {"status": "error", "message": f"Metasploit RPC error: {e}"}
     except Exception as e:
         logger.exception("Unexpected error listing jobs/handlers.")
         return {"status": "error", "message": f"Unexpected server error listing jobs: {e}"}
@@ -1264,7 +1466,7 @@ async def start_listener(
     payload_type: str,
     lhost: str,
     lport: int,
-    additional_options: Optional[Dict[str, Any]] = None,
+    additional_options: Optional[Union[Dict[str, Any], str]] = None,
     exit_on_session: bool = False # Option to keep listener running
 ) -> Dict[str, Any]:
     """
@@ -1274,7 +1476,8 @@ async def start_listener(
         payload_type: The payload to handle (e.g., 'windows/meterpreter/reverse_tcp').
         lhost: Listener host address.
         lport: Listener port (1-65535).
-        additional_options: Optional dict of additional payload options (e.g., LURI, HandlerSSLCert).
+        additional_options: Optional dict of additional payload options (e.g., {"LURI": "/path"})
+                           or string format "LURI=/path,HandlerSSLCert=cert.pem". Prefer dict format.
         exit_on_session: If True, handler exits after first session. If False (default), it keeps running.
 
     Returns:
@@ -1285,10 +1488,16 @@ async def start_listener(
     if not (1 <= lport <= 65535):
         return {"status": "error", "message": "Invalid LPORT. Must be between 1 and 65535."}
 
+    # Parse additional options gracefully
+    try:
+        parsed_additional_options = _parse_options_gracefully(additional_options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid additional_options format: {e}"}
+
     # exploit/multi/handler options
     module_options = {'ExitOnSession': exit_on_session}
     # Payload options (passed within the payload_spec)
-    payload_options = additional_options or {}
+    payload_options = parsed_additional_options
     payload_options['LHOST'] = lhost
     payload_options['LPORT'] = lport
 
@@ -1458,12 +1667,19 @@ async def health_check():
     """Check connectivity to the Metasploit RPC service."""
     try:
         client = get_msf_client() # Will raise ConnectionError if not init
-        logger.debug("Executing health check MSF call (core.version)...")
+        logger.debug(f"Executing health check MSF call (core.version) with {RPC_CALL_TIMEOUT}s timeout...")
         # Use a lightweight call like core.version
-        version_info = await asyncio.to_thread(lambda: client.core.version)
+        version_info = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.core.version),
+            timeout=RPC_CALL_TIMEOUT
+        )
         msf_version = version_info.get('version', 'N/A') if isinstance(version_info, dict) else 'N/A'
         logger.info(f"Health check successful. MSF Version: {msf_version}")
         return {"status": "ok", "msf_version": msf_version}
+    except asyncio.TimeoutError:
+        error_msg = f"Health check timeout ({RPC_CALL_TIMEOUT}s) - Metasploit server is not responding"
+        logger.error(error_msg)
+        raise HTTPException(status_code=503, detail=error_msg)
     except (MsfRpcError, ConnectionError) as e:
         logger.error(f"Health check failed - MSF RPC connection error: {e}")
         raise HTTPException(status_code=503, detail=f"Metasploit Service Unavailable: {e}")
