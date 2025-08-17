@@ -17,12 +17,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Mock the dependencies that aren't available in test environment
 sys.modules['uvicorn'] = Mock()
 sys.modules['fastapi'] = Mock()
-sys.modules['mcp.server.fastmcp'] = Mock()
-sys.modules['mcp.server.sse'] = Mock()
-sys.modules['pymetasploit3.msfrpc'] = Mock()
 sys.modules['starlette.applications'] = Mock()
 sys.modules['starlette.routing'] = Mock()
+
+# Create a special mock for FastMCP that preserves the tool decorator behavior
+class MockFastMCP:
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def tool(self):
+        # Return a decorator that just returns the original function
+        def decorator(func):
+            return func
+        return decorator
+
+# Mock the MCP modules with our custom FastMCP
+mcp_server_fastmcp = Mock()
+mcp_server_fastmcp.FastMCP = MockFastMCP
+sys.modules['mcp.server.fastmcp'] = mcp_server_fastmcp
+sys.modules['mcp.server.sse'] = Mock()
 sys.modules['mcp.server.session'] = Mock()
+
+# Mock pymetasploit3 module
+sys.modules['pymetasploit3.msfrpc'] = Mock()
 
 # Create comprehensive mock classes
 class MockMsfRpcClient:
@@ -35,10 +52,12 @@ class MockMsfRpcClient:
         
         # Setup default behaviors
         self.core.version = {'version': '6.3.0'}
+        # These are properties that return lists
         self.modules.exploits = ['windows/smb/ms17_010_eternalblue', 'unix/ftp/vsftpd_234_backdoor']
         self.modules.payloads = ['windows/meterpreter/reverse_tcp', 'linux/x86/shell/reverse_tcp']
-        self.sessions.list.return_value = {}
-        self.jobs.list.return_value = {}
+        # These are methods that return dicts
+        self.sessions.list = Mock(return_value={})
+        self.jobs.list = Mock(return_value={})
 
 class MockMsfConsole:
     def __init__(self, cid='test-console-id'):
@@ -56,7 +75,8 @@ class MockMsfModule:
     def __init__(self, fullname):
         self.fullname = fullname
         self.options = {}
-        self.runoptions = Mock()
+        # Create a proper mock for runoptions that supports __setitem__
+        self.runoptions = {}
         self.missing_required = []
         
     def __setitem__(self, key, value):
@@ -80,12 +100,21 @@ sys.modules['pymetasploit3.msfrpc'].MsfRpcClient = MockMsfRpcClient
 sys.modules['pymetasploit3.msfrpc'].MsfConsole = MockMsfConsole  
 sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 
-# Import the tools to test after mocking
-from MetasploitMCP import (
-    list_exploits, list_payloads, generate_payload, run_exploit,
-    run_post_module, run_auxiliary_module, list_active_sessions,
-    send_session_command, start_listener, stop_job, terminate_session
-)
+# Import the module and then get the actual functions
+import MetasploitMCP
+
+# Get the actual functions (not mocked)
+list_exploits = MetasploitMCP.list_exploits
+list_payloads = MetasploitMCP.list_payloads
+generate_payload = MetasploitMCP.generate_payload
+run_exploit = MetasploitMCP.run_exploit
+run_post_module = MetasploitMCP.run_post_module
+run_auxiliary_module = MetasploitMCP.run_auxiliary_module
+list_active_sessions = MetasploitMCP.list_active_sessions
+send_session_command = MetasploitMCP.send_session_command
+start_listener = MetasploitMCP.start_listener
+stop_job = MetasploitMCP.stop_job
+terminate_session = MetasploitMCP.terminate_session
 
 
 class TestExploitListingTools:
@@ -391,11 +420,12 @@ class TestSessionManagement:
         session.write = Mock()
         session.stop = Mock()
         
-        client.sessions.list.return_value = {
+        # Override the default Mock with actual dict return values
+        client.sessions.list = Mock(return_value={
             "1": {"type": "meterpreter", "info": "Windows session"},
             "2": {"type": "shell", "info": "Linux session"}
-        }
-        client.sessions.session.return_value = session
+        })
+        client.sessions.session = Mock(return_value=session)
         
         with patch('MetasploitMCP.get_msf_client', return_value=client):
             yield client, session
@@ -457,6 +487,10 @@ class TestListenerManagement:
     def mock_job_environment(self):
         """Fixture providing mocked job management environment."""
         client = MockMsfRpcClient()
+        
+        # Override the default Mock with actual dict return values
+        client.jobs.list = Mock(return_value={})
+        client.jobs.stop = Mock(return_value="stopped")
         
         with patch('MetasploitMCP.get_msf_client', return_value=client):
             with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
