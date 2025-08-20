@@ -1543,9 +1543,10 @@ async def start_listener(
     payload_options['LHOST'] = lhost
     payload_options['LPORT'] = lport
     
-    # Add bind address and port if they differ from LHOST/LPORT
-    if bind_address != lhost:
-        payload_options['ReverseListenerBindAddress'] = bind_address
+    # Always set bind address to ensure 0.0.0.0 default (unless user specified otherwise)
+    payload_options['ReverseListenerBindAddress'] = bind_address
+    
+    # Only set bind port if it differs from LPORT
     if bind_port != lport:
         payload_options['ReverseListenerBindPort'] = bind_port
 
