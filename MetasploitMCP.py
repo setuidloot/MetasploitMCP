@@ -305,6 +305,7 @@ ServerSession._received_request = _received_request
 ####################################################################################
 
 # --- MCP Server Initialization ---
+# Create FastMCP instance with default settings - will be reconfigured in main()
 mcp = FastMCP("Metasploit Tools Enhanced (Streamlined)")
 
 # --- Internal Helper Functions ---
@@ -1847,16 +1848,16 @@ if __name__ == "__main__":
             start_port = selected_port if selected_port is not None else 8085
             selected_port = find_available_port(start_port, host=check_host)
 
+        # Update FastMCP settings with command line arguments
+        mcp.settings.host = args.host
+        mcp.settings.port = selected_port
+        
         logger.info(f"Starting FastMCP HTTP server on http://{args.host}:{selected_port}")
         logger.info(f"MCP HTTP Endpoint: /mcp")
         logger.info(f"Payload Save Directory: {PAYLOAD_SAVE_DIR}")
         
         try:
-            mcp.run(
-                transport="http",
-                host=args.host,
-                port=selected_port
-            )
+            mcp.run(transport="streamable-http")
         except Exception as e:
             logger.exception("Error during MCP HTTP server run.")
             sys.exit(1)
