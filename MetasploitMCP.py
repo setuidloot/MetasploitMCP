@@ -15,13 +15,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # --- Third-party Libraries ---
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
 from mcp.server.fastmcp import FastMCP
-from mcp.server.sse import SseServerTransport
 from pymetasploit3.msfrpc import MsfConsole, MsfRpcClient, MsfRpcError
-from starlette.applications import Starlette
-from starlette.routing import Mount, Route, Router
 
 # --- Configuration & Constants ---
 
@@ -1677,47 +1672,11 @@ async def terminate_session(session_id: int) -> Dict[str, Any]:
         logger.exception(f"Unexpected error terminating session {session_id}")
         return {"status": "error", "message": f"Unexpected error terminating session {session_id}: {e}"}
 
-# --- FastAPI Application Setup ---
+# --- Health Check Tool ---
+# Add health check as an MCP tool instead of a separate endpoint
 
-app = FastAPI(
-    title="Metasploit MCP Server (Streamlined)",
-    description="Provides core Metasploit functionality via the Model Context Protocol.",
-    version="1.6.0", # Incremented version
-)
-
-# Setup MCP transport (SSE for HTTP mode)
-sse = SseServerTransport("/messages/")
-
-# Define ASGI handlers properly with Starlette's ASGIApp interface
-class SseEndpoint:
-    async def __call__(self, scope, receive, send):
-        """Handle Server-Sent Events connection for MCP communication."""
-        client_host = scope.get('client')[0] if scope.get('client') else 'unknown'
-        client_port = scope.get('client')[1] if scope.get('client') else 'unknown'
-        logger.info(f"New SSE connection from {client_host}:{client_port}")
-        async with sse.connect_sse(scope, receive, send) as (read_stream, write_stream):
-            await mcp._mcp_server.run(read_stream, write_stream, mcp._mcp_server.create_initialization_options())
-        logger.info(f"SSE connection closed from {client_host}:{client_port}")
-
-class MessagesEndpoint:
-    async def __call__(self, scope, receive, send):
-        """Handle client POST messages for MCP communication."""
-        client_host = scope.get('client')[0] if scope.get('client') else 'unknown'
-        client_port = scope.get('client')[1] if scope.get('client') else 'unknown'
-        logger.info(f"Received POST message from {client_host}:{client_port}")
-        await sse.handle_post_message(scope, receive, send)
-
-# Create routes using the ASGIApp-compliant classes
-mcp_router = Router([
-    Route("/sse", endpoint=SseEndpoint(), methods=["GET"]),
-    Route("/messages/", endpoint=MessagesEndpoint(), methods=["POST"]),
-])
-
-# Mount the MCP router to the main app
-app.routes.append(Mount("/", app=mcp_router))
-
-@app.get("/healthz", tags=["Health"])
-async def health_check():
+@mcp.tool()
+async def health_check() -> Dict[str, Any]:
     """Check connectivity to the Metasploit RPC service."""
     try:
         client = get_msf_client() # Will raise ConnectionError if not init
@@ -1733,13 +1692,13 @@ async def health_check():
     except asyncio.TimeoutError:
         error_msg = f"Health check timeout ({RPC_CALL_TIMEOUT}s) - Metasploit server is not responding"
         logger.error(error_msg)
-        raise HTTPException(status_code=503, detail=error_msg)
+        return {"status": "error", "message": error_msg}
     except (MsfRpcError, ConnectionError) as e:
         logger.error(f"Health check failed - MSF RPC connection error: {e}")
-        raise HTTPException(status_code=503, detail=f"Metasploit Service Unavailable: {e}")
+        return {"status": "error", "message": f"Metasploit Service Unavailable: {e}"}
     except Exception as e:
         logger.exception("Unexpected error during health check.")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error during health check: {e}")
+        return {"status": "error", "message": f"Internal Server Error during health check: {e}"}
 
 # --- Server Startup Logic ---
 
@@ -1861,7 +1820,7 @@ if __name__ == "__main__":
         '--transport', 
         choices=['http', 'stdio'], 
         default='http',
-        help='MCP transport mode to use (http=SSE, stdio=direct pipe)'
+        help='MCP transport mode to use (http=HTTP POST, stdio=direct pipe)'
     )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind the HTTP server to (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=None, help='Port to listen on (default: find available from 8085)')
@@ -1877,8 +1836,8 @@ if __name__ == "__main__":
             logger.exception("Error during MCP stdio run loop.")
             sys.exit(1)
         logger.info("MCP stdio server finished.")
-    else:  # HTTP/SSE mode (default)
-        logger.info("Starting MCP server in HTTP/SSE transport mode.")
+    else:  # HTTP mode (default)
+        logger.info("Starting MCP server in HTTP transport mode.")
         
         # Check port availability
         check_host = args.host if args.host != '0.0.0.0' else '127.0.0.1'
@@ -1887,16 +1846,16 @@ if __name__ == "__main__":
             start_port = selected_port if selected_port is not None else 8085
             selected_port = find_available_port(start_port, host=check_host)
 
-        logger.info(f"Starting Uvicorn HTTP server on http://{args.host}:{selected_port}")
-        logger.info(f"MCP SSE Endpoint: /sse")
-        logger.info(f"API Docs available at http://{args.host}:{selected_port}/docs")
+        logger.info(f"Starting FastMCP HTTP server on http://{args.host}:{selected_port}")
+        logger.info(f"MCP HTTP Endpoint: /mcp")
         logger.info(f"Payload Save Directory: {PAYLOAD_SAVE_DIR}")
-        logger.info(f"Auto-reload: {'Enabled' if args.reload else 'Disabled'}")
-
-        uvicorn.run(
-            "__main__:app",
-            host=args.host,
-            port=selected_port,
-            reload=args.reload,
-            log_level="info"
-        )
+        
+        try:
+            mcp.run(
+                transport="http",
+                host=args.host,
+                port=selected_port
+            )
+        except Exception as e:
+            logger.exception("Error during MCP HTTP server run.")
+            sys.exit(1)
