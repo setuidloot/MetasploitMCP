@@ -1,9 +1,30 @@
 [tool.poetry]
 name = "metasploit-mcp"
-version = "1.6.0"
+version = "2.0.0"
 description = "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["MetasploitMCP Contributors"]
 readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/cbdmaul/MetasploitMCP"
+repository = "https://github.com/cbdmaul/MetasploitMCP"
+documentation = "https://github.com/cbdmaul/MetasploitMCP/tree/main/docs"
+keywords = ["metasploit", "mcp", "security", "penetration-testing", "rpc"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+]
 packages = [{include = "MetasploitMCP.py"}]
 
 [tool.poetry.dependencies]
@@ -20,6 +41,10 @@ pytest-asyncio = ">=0.21.0"
 pytest-mock = ">=3.10.0"
 pytest-cov = ">=4.0.0"
 mock = ">=4.0.3"
+black = ">=23.0.0"
+flake8 = ">=6.0.0"
+mypy = ">=1.0.0"
+pre-commit = ">=3.0.0"
 
 [tool.poetry.scripts]
 metasploit-mcp = "MetasploitMCP:main"
@@ -54,3 +79,65 @@ exclude_lines = [
     "if 0:",
     "if __name__ == .__main__.:"
 ]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pymetasploit3.*",
+    "mcp.*",
+    "fastmcp.*"
+]
+ignore_missing_imports = true
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = [
+    "E203",  # whitespace before ':'
+    "E501",  # line too long (handled by black)
+    "W503",  # line break before binary operator
+]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+    "venv",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv", ".venv"]
+skips = ["B101", "B601"]  # Skip assert_used and shell_injection_process_args for testing
