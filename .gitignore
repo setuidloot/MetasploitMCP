@@ -35,4 +35,4 @@ desktop.ini
 # Python testing
 .pytest_cache/
 .coverage
-htmlcov/ 
+htmlcov/ *.stackdump
