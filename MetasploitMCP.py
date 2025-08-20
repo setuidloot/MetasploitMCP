@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import contextlib
+import ipaddress
 import logging
 import os
 import pathlib
@@ -831,6 +832,8 @@ async def generate_payload(
     keep_template: bool = False,
     force_encode: bool = False,
     output_filename: Optional[str] = None,
+    reverse_listener_bind_address: Optional[str] = None,
+    reverse_listener_bind_port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Generate a Metasploit payload using the RPC API (payload.generate).
@@ -849,6 +852,10 @@ async def generate_payload(
         keep_template: Keep the template working (requires template_path).
         force_encode: Force encoding even if not needed by bad chars.
         output_filename: Optional desired filename (without path). If None, a default name is generated.
+        reverse_listener_bind_address: Optional bind address for reverse payloads (defaults to 0.0.0.0).
+                                      Use this when LHOST differs from the interface to bind to (e.g., NAT/firewall).
+        reverse_listener_bind_port: Optional bind port for reverse payloads (defaults to LPORT).
+                                   Use this when LPORT differs from the port to bind to (e.g., port forwarding).
 
     Returns:
         Dictionary containing status, message, payload size/info, and server-side save path.
@@ -864,6 +871,27 @@ async def generate_payload(
 
     if not parsed_options:
         return {"status": "error", "message": "Payload 'options' dictionary (e.g., LHOST, LPORT) is required."}
+
+    # Handle bind address and port options
+    bind_address_to_validate = None
+    if reverse_listener_bind_address is not None:
+        bind_address_to_validate = reverse_listener_bind_address
+        parsed_options['ReverseListenerBindAddress'] = reverse_listener_bind_address
+    elif 'LHOST' in parsed_options:
+        # Default to 0.0.0.0 instead of using LHOST
+        bind_address_to_validate = "0.0.0.0"
+        parsed_options['ReverseListenerBindAddress'] = "0.0.0.0"
+    
+    # Validate bind address if one was set
+    if bind_address_to_validate is not None:
+        is_valid, error_msg = validate_bind_address(bind_address_to_validate)
+        if not is_valid:
+            return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
+    
+    if reverse_listener_bind_port is not None:
+        if not (1 <= reverse_listener_bind_port <= 65535):
+            return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
+        parsed_options['ReverseListenerBindPort'] = reverse_listener_bind_port
 
     try:
         # Get the payload module object
@@ -1467,26 +1495,45 @@ async def start_listener(
     lhost: str,
     lport: int,
     additional_options: Optional[Union[Dict[str, Any], str]] = None,
-    exit_on_session: bool = False # Option to keep listener running
+    exit_on_session: bool = False, # Option to keep listener running
+    reverse_listener_bind_address: Optional[str] = None,
+    reverse_listener_bind_port: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Start a new Metasploit handler (exploit/multi/handler) as a background job.
 
     Args:
         payload_type: The payload to handle (e.g., 'windows/meterpreter/reverse_tcp').
-        lhost: Listener host address.
-        lport: Listener port (1-65535).
+        lhost: Listener host address (what the target connects to).
+        lport: Listener port (1-65535) (what the target connects to).
         additional_options: Optional dict of additional payload options (e.g., {"LURI": "/path"})
                            or string format "LURI=/path,HandlerSSLCert=cert.pem". Prefer dict format.
         exit_on_session: If True, handler exits after first session. If False (default), it keeps running.
+        reverse_listener_bind_address: Optional bind address for the handler (defaults to 0.0.0.0).
+                                      Use this when LHOST differs from the interface to bind to (e.g., NAT/firewall).
+        reverse_listener_bind_port: Optional bind port for the handler (defaults to LPORT).
+                                   Use this when LPORT differs from the port to bind to (e.g., port forwarding).
 
     Returns:
         Dictionary with handler status (job_id) or error details.
     """
-    logger.info(f"Request to start listener for {payload_type} on {lhost}:{lport}. ExitOnSession: {exit_on_session}")
+    # Set defaults for bind address and port
+    bind_address = reverse_listener_bind_address if reverse_listener_bind_address is not None else "0.0.0.0"
+    bind_port = reverse_listener_bind_port if reverse_listener_bind_port is not None else lport
+    
+    logger.info(f"Request to start listener for {payload_type} on {lhost}:{lport}. "
+                f"Bind: {bind_address}:{bind_port}. ExitOnSession: {exit_on_session}")
 
     if not (1 <= lport <= 65535):
         return {"status": "error", "message": "Invalid LPORT. Must be between 1 and 65535."}
+    
+    if reverse_listener_bind_port is not None and not (1 <= reverse_listener_bind_port <= 65535):
+        return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
+    
+    # Validate bind address
+    is_valid, error_msg = validate_bind_address(bind_address)
+    if not is_valid:
+        return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
 
     # Parse additional options gracefully
     try:
@@ -1500,6 +1547,12 @@ async def start_listener(
     payload_options = parsed_additional_options
     payload_options['LHOST'] = lhost
     payload_options['LPORT'] = lport
+    
+    # Add bind address and port if they differ from LHOST/LPORT
+    if bind_address != lhost:
+        payload_options['ReverseListenerBindAddress'] = bind_address
+    if bind_port != lport:
+        payload_options['ReverseListenerBindPort'] = bind_port
 
     payload_spec = {"name": payload_type, "options": payload_options}
 
@@ -1513,7 +1566,8 @@ async def start_listener(
 
     # Rename status/message slightly for clarity
     if result.get("status") == "success":
-         result["message"] = f"Listener for {payload_type} started as job {result.get('job_id')} on {lhost}:{lport}."
+        bind_info = f" (binding to {bind_address}:{bind_port})" if (bind_address != lhost or bind_port != lport) else ""
+        result["message"] = f"Listener for {payload_type} started as job {result.get('job_id')} on {lhost}:{lport}{bind_info}."
     elif result.get("status") == "warning": # e.g., job started but polling failed (not applicable here but handle)
          result["message"] = f"Listener job {result.get('job_id')} started, but encountered issues: {result.get('message')}"
     else: # Error case
@@ -1702,6 +1756,94 @@ def find_available_port(start_port, host='127.0.0.1', max_attempts=10):
                 continue
     logger.warning(f"Could not find available port in range {start_port}-{start_port+max_attempts-1} on {host}. Using default {start_port}.")
     return start_port
+
+def get_local_ip_addresses() -> List[str]:
+    """
+    Get all configured IP addresses on the local machine.
+    Returns a list of IP address strings (both IPv4 and IPv6).
+    """
+    ip_addresses = []
+    
+    try:
+        # Get all network interfaces and their addresses
+        import socket
+        
+        # Method 1: Use socket.getaddrinfo to get local addresses
+        # This gets the hostname and resolves all its addresses
+        hostname = socket.gethostname()
+        try:
+            for info in socket.getaddrinfo(hostname, None):
+                addr = info[4][0]
+                if addr not in ip_addresses:
+                    ip_addresses.append(addr)
+        except socket.gaierror:
+            logger.debug("Could not resolve hostname addresses")
+        
+        # Method 2: Try to connect to a remote address to discover local IPs
+        # This helps find the actual routable local IPs
+        test_addresses = [
+            ('8.8.8.8', 80),      # Google DNS (IPv4)
+            ('2001:4860:4860::8888', 80)  # Google DNS (IPv6)
+        ]
+        
+        for test_addr, test_port in test_addresses:
+            try:
+                with socket.socket(socket.AF_INET6 if ':' in test_addr else socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect((test_addr, test_port))
+                    local_addr = s.getsockname()[0]
+                    if local_addr not in ip_addresses:
+                        ip_addresses.append(local_addr)
+            except (socket.error, OSError):
+                continue
+        
+        # Always include loopback addresses
+        loopback_addresses = ['127.0.0.1', '::1']
+        for addr in loopback_addresses:
+            if addr not in ip_addresses:
+                ip_addresses.append(addr)
+        
+        logger.debug(f"Discovered local IP addresses: {ip_addresses}")
+        return ip_addresses
+        
+    except Exception as e:
+        logger.warning(f"Error discovering local IP addresses: {e}")
+        # Fallback to basic loopback addresses
+        return ['127.0.0.1', '::1']
+
+def validate_bind_address(bind_address: str) -> Tuple[bool, str]:
+    """
+    Validate that a bind address is either a wildcard address or a configured local IP.
+    
+    Args:
+        bind_address: The IP address to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message). If valid, error_message is empty.
+    """
+    if not bind_address:
+        return False, "Bind address cannot be empty"
+    
+    try:
+        # Parse the address to ensure it's a valid IP
+        addr_obj = ipaddress.ip_address(bind_address)
+        
+        # Check if it's a wildcard address (0.0.0.0 or ::)
+        if addr_obj.is_unspecified:
+            return True, ""
+        
+        # Get all local IP addresses
+        local_ips = get_local_ip_addresses()
+        
+        # Check if the bind address is one of the local IPs
+        if bind_address in local_ips:
+            return True, ""
+        
+        # If we get here, it's not a wildcard and not a local IP
+        return False, (f"Bind address '{bind_address}' is not a wildcard address (0.0.0.0 or ::) "
+                      f"and is not configured on this machine. Available addresses: {', '.join(local_ips)}")
+        
+    except ValueError as e:
+        return False, f"Invalid IP address format: {bind_address} ({e})"
 
 if __name__ == "__main__":
     # Initialize MSF Client - Critical for server function

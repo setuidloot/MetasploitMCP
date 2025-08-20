@@ -55,9 +55,9 @@ class MockMsfRpcClient:
         # These are properties that return lists
         self.modules.exploits = ['windows/smb/ms17_010_eternalblue', 'unix/ftp/vsftpd_234_backdoor']
         self.modules.payloads = ['windows/meterpreter/reverse_tcp', 'linux/x86/shell/reverse_tcp']
-        # These are methods that return dicts
-        self.sessions.list = Mock(return_value={})
-        self.jobs.list = Mock(return_value={})
+        # These are properties that return dicts (not methods!)
+        self.sessions.list = {}
+        self.jobs.list = {}
 
 class MockMsfConsole:
     def __init__(self, cid='test-console-id'):
@@ -121,7 +121,7 @@ class TestExploitListingTools:
     """Test tools for listing exploits and payloads."""
 
     @pytest.fixture
-    def mock_client(self):
+    def mock_client(self, mock_asyncio_to_thread):
         """Fixture providing a mock MSF client."""
         client = MockMsfRpcClient()
         with patch('MetasploitMCP.get_msf_client', return_value=client):
@@ -130,11 +130,12 @@ class TestExploitListingTools:
     @pytest.mark.asyncio
     async def test_list_exploits_no_filter(self, mock_client):
         """Test listing exploits without filter."""
-        mock_client.modules.exploits = [
+        exploits_list = [
             'windows/smb/ms17_010_eternalblue',
             'unix/ftp/vsftpd_234_backdoor',
             'windows/http/iis_webdav_upload_asp'
         ]
+        mock_client.modules.exploits = exploits_list
         
         result = await list_exploits()
         
@@ -237,7 +238,7 @@ class TestPayloadGeneration:
     """Test payload generation functionality."""
 
     @pytest.fixture
-    def mock_client_and_module(self):
+    def mock_client_and_module(self, mock_asyncio_to_thread):
         """Fixture providing mocked client and module."""
         client = MockMsfRpcClient()
         module = MockMsfModule('payload/windows/meterpreter/reverse_tcp')
@@ -316,7 +317,7 @@ class TestExploitExecution:
     """Test exploit execution functionality."""
 
     @pytest.fixture
-    def mock_exploit_environment(self):
+    def mock_exploit_environment(self, mock_asyncio_to_thread):
         """Fixture providing mocked exploit execution environment."""
         client = MockMsfRpcClient()
         module = MockMsfModule('exploit/windows/smb/ms17_010_eternalblue')
@@ -411,7 +412,7 @@ class TestSessionManagement:
     """Test session management functionality."""
 
     @pytest.fixture
-    def mock_session_environment(self):
+    def mock_session_environment(self, mock_asyncio_to_thread):
         """Fixture providing mocked session management environment."""
         client = MockMsfRpcClient()
         session = Mock()
@@ -420,11 +421,11 @@ class TestSessionManagement:
         session.write = Mock()
         session.stop = Mock()
         
-        # Override the default Mock with actual dict return values
-        client.sessions.list = Mock(return_value={
+        # Override the default values with actual dict values
+        client.sessions.list = {
             "1": {"type": "meterpreter", "info": "Windows session"},
             "2": {"type": "shell", "info": "Linux session"}
-        })
+        }
         client.sessions.session = Mock(return_value=session)
         
         with patch('MetasploitMCP.get_msf_client', return_value=client):
@@ -456,7 +457,7 @@ class TestSessionManagement:
     async def test_send_session_command_nonexistent(self, mock_session_environment):
         """Test sending command to non-existent session."""
         client, session = mock_session_environment
-        client.sessions.list.return_value = {}  # No sessions
+        client.sessions.list = {}  # No sessions
         
         result = await send_session_command(999, "whoami")
         
@@ -468,13 +469,28 @@ class TestSessionManagement:
         """Test session termination."""
         client, session = mock_session_environment
         
-        # Mock session disappearing after termination
-        client.sessions.list.side_effect = [
-            {"1": {"type": "meterpreter"}},  # Before termination
-            {}  # After termination
-        ]
+        # Set initial session state
+        client.sessions.list = {"1": {"type": "meterpreter"}}
         
-        result = await terminate_session(1)
+        # Mock the asyncio.to_thread calls to simulate session disappearing after termination
+        call_count = 0
+        
+        async def mock_to_thread_for_terminate(func, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            
+            # Check if this is a lambda that accesses client.sessions.list
+            try:
+                result = func(*args, **kwargs)
+                # If this returns the sessions dict and it's the second call, return empty
+                if isinstance(result, dict) and call_count >= 2 and "1" in str(result):
+                    return {}
+                return result
+            except:
+                return func(*args, **kwargs)
+        
+        with patch('asyncio.to_thread', side_effect=mock_to_thread_for_terminate):
+            result = await terminate_session(1)
         
         assert result["status"] == "success"
         session.stop.assert_called_once()
@@ -484,12 +500,12 @@ class TestListenerManagement:
     """Test listener and job management functionality."""
 
     @pytest.fixture
-    def mock_job_environment(self):
+    def mock_job_environment(self, mock_asyncio_to_thread):
         """Fixture providing mocked job management environment."""
         client = MockMsfRpcClient()
         
-        # Override the default Mock with actual dict return values
-        client.jobs.list = Mock(return_value={})
+        # Override the default values with actual dict values
+        client.jobs.list = {}
         client.jobs.stop = Mock(return_value="stopped")
         
         with patch('MetasploitMCP.get_msf_client', return_value=client):
@@ -554,14 +570,29 @@ class TestListenerManagement:
         """Test stopping a job."""
         client, mock_rpc = mock_job_environment
         
-        # Mock job exists before stop, gone after stop
-        client.jobs.list.side_effect = [
-            {"1234": {"name": "Handler Job"}},  # Before stop
-            {}  # After stop  
-        ]
+        # Set initial job state
+        client.jobs.list = {"1234": {"name": "Handler Job"}}
         client.jobs.stop.return_value = "stopped"
         
-        result = await stop_job(1234)
+        # Mock the asyncio.to_thread calls to simulate job disappearing after stop
+        call_count = 0
+        
+        async def mock_to_thread_for_stop_job(func, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            
+            # Check if this is a lambda that accesses client.jobs.list
+            try:
+                result = func(*args, **kwargs)
+                # If this returns the jobs dict and it's the second call, return empty
+                if isinstance(result, dict) and call_count >= 2 and "1234" in str(result):
+                    return {}
+                return result
+            except:
+                return func(*args, **kwargs)
+        
+        with patch('asyncio.to_thread', side_effect=mock_to_thread_for_stop_job):
+            result = await stop_job(1234)
         
         assert result["status"] == "success"
         client.jobs.stop.assert_called_once_with("1234")
