@@ -232,13 +232,32 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         check_interval = 0.1 # Seconds between reads
         last_data_time = start_time
 
+        # Progress tracking for long-running commands
+        progress_interval = 10  # Log progress every 10 seconds
+        last_progress_time = start_time
+        total_chunks_read = 0
+        total_bytes_read = 0
+        
+        logger.info(f"Starting console command execution: '{cmd}' (timeout: {read_timeout}s)")
+        
         while True:
             await asyncio.sleep(check_interval)
             current_time = asyncio.get_event_loop().time()
+            elapsed_time = current_time - start_time
+
+            # Progress logging for long-running operations
+            if (current_time - last_progress_time) >= progress_interval:
+                logger.info(f"Console command '{cmd}' still running... "
+                          f"Elapsed: {elapsed_time:.1f}s/{read_timeout}s, "
+                          f"Chunks read: {total_chunks_read}, "
+                          f"Bytes received: {total_bytes_read}, "
+                          f"Last activity: {current_time - last_data_time:.1f}s ago")
+                last_progress_time = current_time
 
             # Check overall timeout first
-            if (current_time - start_time) > read_timeout:
-                 logger.warning(f"Overall timeout ({read_timeout}s) reached for console command '{cmd}'.")
+            if elapsed_time > read_timeout:
+                 logger.warning(f"Overall timeout ({read_timeout}s) reached for console command '{cmd}'. "
+                              f"Total chunks: {total_chunks_read}, bytes: {total_bytes_read}")
                  break
 
             # Read available data
@@ -246,43 +265,67 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
                 chunk_result = await asyncio.to_thread(lambda: console.read())
                 # console.read() returns {'data': '...', 'prompt': '...', 'busy': bool}
                 chunk_data = chunk_result.get('data', '').encode('utf-8', errors='replace') # Ensure bytes
+                is_busy = chunk_result.get('busy', False)
 
                 # Handle the prompt - ensure it's bytes for pattern matching
                 prompt_str = chunk_result.get('prompt', '')
                 prompt_bytes = prompt_str.encode('utf-8', errors='replace') if isinstance(prompt_str, str) else prompt_str
+                
+                # Log console busy state periodically
+                if is_busy and (current_time - last_progress_time) >= (progress_interval - 1):
+                    logger.debug(f"Console reports busy=True for command '{cmd}' at {elapsed_time:.1f}s")
+                    
             except Exception as read_err:
-                logger.warning(f"Error reading from console during command '{cmd}': {read_err}")
+                logger.warning(f"Error reading from console during command '{cmd}' at {elapsed_time:.1f}s: {read_err}")
                 await asyncio.sleep(0.5) # Wait a bit before retrying or timing out
                 continue
 
             if chunk_data:
-                # logger.debug(f"Read chunk (bytes): {chunk_data[:100]}...") # Log sparingly
+                chunk_size = len(chunk_data)
+                total_chunks_read += 1
+                total_bytes_read += chunk_size
+                
+                # Log significant data chunks
+                if chunk_size > 100:
+                    logger.debug(f"Received significant data chunk for '{cmd}': {chunk_size} bytes "
+                               f"(total: {total_bytes_read} bytes in {total_chunks_read} chunks)")
+                
                 output_buffer += chunk_data
                 last_data_time = current_time # Reset inactivity timer
 
                 # Primary Completion Check: Did we receive the prompt?
                 if prompt_bytes and MSF_PROMPT_RE.search(prompt_bytes):
-                     logger.debug(f"Detected MSF prompt in console.read() result for '{cmd}'. Command likely complete.")
+                     logger.info(f"Detected MSF prompt in console.read() result for '{cmd}' after {elapsed_time:.1f}s. Command complete.")
                      break
                 # Secondary Check: Does the buffered output end with the prompt?
                 # Needed if prompt wasn't in the last read chunk but arrived earlier.
                 if MSF_PROMPT_RE.search(output_buffer):
-                     logger.debug(f"Detected MSF prompt at end of buffer for '{cmd}'. Command likely complete.")
+                     logger.info(f"Detected MSF prompt at end of buffer for '{cmd}' after {elapsed_time:.1f}s. Command complete.")
                      break
 
             # Fallback Completion Check: Inactivity timeout
-            elif (current_time - last_data_time) > SESSION_READ_INACTIVITY_TIMEOUT: # Use a shorter inactivity timeout here
-                logger.debug(f"Console inactivity timeout ({SESSION_READ_INACTIVITY_TIMEOUT}s) reached for command '{cmd}'. Assuming complete.")
+            elif (current_time - last_data_time) > SESSION_READ_INACTIVITY_TIMEOUT:
+                inactivity_duration = current_time - last_data_time
+                logger.info(f"Console inactivity timeout ({SESSION_READ_INACTIVITY_TIMEOUT}s) reached for command '{cmd}' "
+                          f"after {elapsed_time:.1f}s total. No data for {inactivity_duration:.1f}s. Assuming complete.")
                 break
 
         # Decode the final buffer
         final_output = output_buffer.decode('utf-8', errors='replace').strip()
+        total_execution_time = asyncio.get_event_loop().time() - start_time
+        
+        logger.info(f"Console command '{cmd}' completed successfully in {total_execution_time:.1f}s. "
+                   f"Read {total_chunks_read} chunks, {total_bytes_read} bytes, "
+                   f"output length: {len(final_output)} chars")
+        
         logger.debug(f"Final output for '{cmd}' (length {len(final_output)}):\n{final_output[:500]}{'...' if len(final_output) > 500 else ''}")
         return final_output
 
     except Exception as e:
-        logger.exception(f"Error executing console command '{cmd}'")
-        raise RuntimeError(f"Failed executing console command '{cmd}': {e}") from e
+        elapsed_time = asyncio.get_event_loop().time() - start_time
+        logger.exception(f"Error executing console command '{cmd}' after {elapsed_time:.1f}s. "
+                        f"Chunks read: {total_chunks_read}, bytes: {total_bytes_read}")
+        raise RuntimeError(f"Failed executing console command '{cmd}' after {elapsed_time:.1f}s: {e}") from e
 
 from mcp.server.session import ServerSession
 
@@ -661,19 +704,31 @@ async def _execute_module_console(
                         setup_commands.append(f"set {key} {val_str}")
 
             # Execute setup commands
-            for cmd in setup_commands:
+            logger.info(f"Executing {len(setup_commands)} setup commands for {full_module_path}")
+            for i, cmd in enumerate(setup_commands, 1):
+                logger.debug(f"Setup command {i}/{len(setup_commands)}: {cmd}")
                 setup_output = await run_command_safely(console, cmd, execution_timeout=DEFAULT_CONSOLE_READ_TIMEOUT)
+                
                 # Basic error check in setup output
                 if any(err in setup_output for err in ["[-] Error setting", "Invalid option", "Unknown module", "Failed to load"]):
                     error_msg = f"Error during setup command '{cmd}': {setup_output}"
                     logger.error(error_msg)
                     return {"status": "error", "message": error_msg, "module": full_module_path}
+                
+                logger.debug(f"Setup command {i} completed successfully")
                 await asyncio.sleep(0.1) # Small delay between setup commands
 
             # Execute the final command (exploit, run, check)
-            logger.info(f"Running final console command: {command}")
+            logger.info(f"Setup complete. Executing final command '{command}' for {full_module_path} "
+                       f"(timeout: {timeout}s)")
+            
+            start_execution_time = asyncio.get_event_loop().time()
             module_output = await run_command_safely(console, command, execution_timeout=timeout)
-            logger.debug(f"Synchronous execution output length: {len(module_output)}")
+            execution_duration = asyncio.get_event_loop().time() - start_execution_time
+            
+            logger.info(f"Module execution completed in {execution_duration:.1f}s. "
+                       f"Output length: {len(module_output)} characters")
+            logger.debug(f"Module output preview: {module_output[:200]}{'...' if len(module_output) > 200 else ''}")
 
             # --- Parse Console Output ---
             session_id = None
@@ -1078,15 +1133,19 @@ async def run_exploit(
              # Fall through to exploit attempt
 
     # Execute the exploit
+    exploit_start_time = asyncio.get_event_loop().time()
+    
     if run_as_job:
-        return await _execute_module_rpc(
+        logger.info(f"Executing exploit '{module_name}' as background job via RPC")
+        result = await _execute_module_rpc(
             module_type='exploit',
             module_name=module_name,
             module_options=options,
             payload_spec=payload_spec
         )
     else:
-        return await _execute_module_console(
+        logger.info(f"Executing exploit '{module_name}' synchronously via console (timeout: {timeout_seconds}s)")
+        result = await _execute_module_console(
             module_type='exploit',
             module_name=module_name,
             module_options=options,
@@ -1094,6 +1153,11 @@ async def run_exploit(
             payload_spec=payload_spec,
             timeout=timeout_seconds
         )
+    
+    exploit_duration = asyncio.get_event_loop().time() - exploit_start_time
+    logger.info(f"Exploit '{module_name}' execution completed in {exploit_duration:.1f}s with status: {result.get('status')}")
+    
+    return result
 
 @mcp.tool()
 async def run_post_module(
@@ -1223,16 +1287,29 @@ async def list_active_sessions() -> Dict[str, Any]:
     client = get_msf_client()
     logger.info("Listing active Metasploit sessions.")
     try:
-        logger.debug(f"Calling client.sessions.list with {RPC_CALL_TIMEOUT}s timeout...")
+        logger.info(f"Requesting active sessions list from Metasploit (timeout: {RPC_CALL_TIMEOUT}s)")
+        start_time = asyncio.get_event_loop().time()
+        
         sessions_dict = await asyncio.wait_for(
             asyncio.to_thread(lambda: client.sessions.list),
             timeout=RPC_CALL_TIMEOUT
         )
+        
+        rpc_duration = asyncio.get_event_loop().time() - start_time
+        
         if not isinstance(sessions_dict, dict):
-            logger.error(f"Expected dict from sessions.list, got {type(sessions_dict)}")
+            logger.error(f"Expected dict from sessions.list, got {type(sessions_dict)} after {rpc_duration:.1f}s")
             return {"status": "error", "message": f"Unexpected data type for sessions list: {type(sessions_dict)}"}
 
-        logger.info(f"Found {len(sessions_dict)} active sessions.")
+        logger.info(f"Successfully retrieved {len(sessions_dict)} sessions from Metasploit in {rpc_duration:.1f}s")
+        
+        # Log session details at debug level
+        if sessions_dict:
+            for session_id, session_info in sessions_dict.items():
+                session_type = session_info.get('type', 'unknown')
+                target_host = session_info.get('target_host', 'unknown')
+                logger.debug(f"Session {session_id}: type={session_type}, target={target_host}")
+        
         # Ensure keys are strings for consistent JSON
         sessions_dict_str_keys = {str(k): v for k, v in sessions_dict.items()}
         return {"status": "success", "sessions": sessions_dict_str_keys, "count": len(sessions_dict_str_keys)}
@@ -1275,19 +1352,32 @@ async def send_session_command(
 
     try:
         # --- Get Session Info and Object ---
+        logger.info(f"Retrieving session {session_id} information and object")
+        start_time = asyncio.get_event_loop().time()
+        
         current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
+        session_list_duration = asyncio.get_event_loop().time() - start_time
+        
         if session_id_str not in current_sessions:
-            logger.error(f"Session {session_id} not found.")
+            logger.error(f"Session {session_id} not found in {len(current_sessions)} active sessions "
+                        f"(retrieved in {session_list_duration:.1f}s)")
             return {"status": "error", "message": f"Session {session_id} not found."}
 
         session_info = current_sessions[session_id_str]
         session_type = session_info.get('type', 'unknown').lower() if isinstance(session_info, dict) else 'unknown'
-        logger.debug(f"Session {session_id} type: {session_type}")
+        target_host = session_info.get('target_host', 'unknown')
+        logger.info(f"Session {session_id} found: type={session_type}, target={target_host}")
 
+        session_obj_start = asyncio.get_event_loop().time()
         session = await asyncio.to_thread(lambda: client.sessions.session(session_id_str))
+        session_obj_duration = asyncio.get_event_loop().time() - session_obj_start
+        
         if not session:
-            logger.error(f"Failed to get session object for existing session {session_id}.")
+            logger.error(f"Failed to get session object for existing session {session_id} "
+                        f"after {session_obj_duration:.1f}s")
             return {"status": "error", "message": f"Error retrieving session {session_id} object."}
+        
+        logger.debug(f"Session object retrieved in {session_obj_duration:.1f}s")
 
         # --- Execute Command Based on Type ---
         output = ""
@@ -1298,31 +1388,46 @@ async def send_session_command(
             if session_shell_type.get(session_id_str) is None:
                 session_shell_type[session_id_str] = 'meterpreter'
 
-            logger.debug(f"Using session.run_with_output for Meterpreter session {session_id}")
+            current_mode = session_shell_type[session_id_str]
+            logger.info(f"Executing Meterpreter command '{command}' on session {session_id} "
+                       f"(current mode: {current_mode}, timeout: {timeout_seconds}s)")
+            
+            command_start_time = asyncio.get_event_loop().time()
+            
             try:
                 # Use asyncio.wait_for to handle timeout manually since run_with_output doesn't support timeout parameter
                 if command == "shell":
                     if session_shell_type[session_id_str] == 'meterpreter':
+                        logger.info(f"Switching session {session_id} from meterpreter to shell mode")
                         output = session.run_with_output(command, end_strs=['created.'])
                         session_shell_type[session_id_str] = 'shell'
                         session.read()  # Clear buffer
+                        logger.info(f"Session {session_id} successfully switched to shell mode")
                     else:
                         output = "You are already in shell mode."
+                        logger.debug(f"Session {session_id} already in shell mode")
                 elif command == "exit":
                     if session_shell_type[session_id_str] == 'meterpreter':
                         output = "You are already in meterpreter mode. No need to exit."
+                        logger.debug(f"Session {session_id} already in meterpreter mode")
                     else:
+                        logger.info(f"Switching session {session_id} from shell to meterpreter mode")
                         session.read()  # Clear buffer
                         session.detach()
                         session_shell_type[session_id_str] = 'meterpreter'
+                        logger.info(f"Session {session_id} successfully switched to meterpreter mode")
                 else:
+                    logger.debug(f"Executing standard Meterpreter command: {command}")
                     output = await asyncio.wait_for(
                         asyncio.to_thread(lambda: session.run_with_output(command)),
                         timeout=timeout_seconds
                     )
+                
+                command_duration = asyncio.get_event_loop().time() - command_start_time
                 status = "success"
                 message = "Meterpreter command executed successfully."
-                logger.debug(f"Meterpreter command '{command}' completed.")
+                logger.info(f"Meterpreter command '{command}' completed successfully in {command_duration:.1f}s "
+                          f"(output length: {len(output)} chars)")
             except asyncio.TimeoutError:
                 status = "timeout"
                 message = f"Meterpreter command timed out after {timeout_seconds} seconds."
@@ -1340,8 +1445,13 @@ async def send_session_command(
                 except: pass
 
         elif session_type == 'shell':
-            logger.debug(f"Using manual read loop for Shell session {session_id}")
+            logger.info(f"Executing shell command '{command}' on session {session_id} "
+                       f"(timeout: {timeout_seconds}s)")
+            
+            command_start_time = asyncio.get_event_loop().time()
+            
             try:
+                logger.debug(f"Writing command to shell session {session_id}: {command}")
                 await asyncio.to_thread(lambda: session.write(command + "\n"))
 
                 # If the command is exit, don't wait for output/prompt, assume it worked
@@ -1354,26 +1464,50 @@ async def send_session_command(
                     return {"status": status, "message": message, "output": output}
 
                 # Proceed with read loop for non-exit commands
+                logger.debug(f"Starting output read loop for shell command '{command}'")
                 output_buffer = ""
                 start_time = asyncio.get_event_loop().time()
                 last_data_time = start_time
                 read_interval = 0.1
+                total_chunks_read = 0
+                progress_interval = 5  # Log progress every 5 seconds for shell commands
+                last_progress_time = start_time
 
                 while True:
                     now = asyncio.get_event_loop().time()
-                    if (now - start_time) > timeout_seconds:
+                    elapsed_time = now - start_time
+                    
+                    # Progress logging for long-running shell commands
+                    if (now - last_progress_time) >= progress_interval:
+                        logger.info(f"Shell command '{command}' still running on session {session_id}... "
+                                  f"Elapsed: {elapsed_time:.1f}s/{timeout_seconds}s, "
+                                  f"Chunks read: {total_chunks_read}, "
+                                  f"Buffer size: {len(output_buffer)} chars, "
+                                  f"Last activity: {now - last_data_time:.1f}s ago")
+                        last_progress_time = now
+                    
+                    if elapsed_time > timeout_seconds:
                         status = "timeout"
                         message = f"Shell command timed out after {timeout_seconds} seconds."
-                        logger.warning(f"Command '{command}' timed out on Shell session {session_id}")
+                        logger.warning(f"Command '{command}' timed out on Shell session {session_id} "
+                                     f"after {elapsed_time:.1f}s (chunks read: {total_chunks_read})")
                         break
 
                     chunk = await asyncio.to_thread(lambda: session.read())
                     if chunk:
+                         chunk_size = len(chunk)
+                         total_chunks_read += 1
                          output_buffer += chunk
                          last_data_time = now
+                         
+                         if chunk_size > 50:  # Log significant chunks
+                             logger.debug(f"Received shell output chunk: {chunk_size} chars "
+                                        f"(total: {len(output_buffer)} chars in {total_chunks_read} chunks)")
+                         
                          # Check if the prompt appears at the end of the current buffer
                          if SHELL_PROMPT_RE.search(output_buffer):
-                             logger.debug(f"Detected shell prompt for command '{command}'.")
+                             command_duration = now - command_start_time
+                             logger.info(f"Detected shell prompt for command '{command}' after {command_duration:.1f}s. Command complete.")
                              status = "success"
                              message = "Shell command executed successfully."
                              break
