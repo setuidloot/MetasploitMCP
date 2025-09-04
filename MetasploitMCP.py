@@ -37,11 +37,11 @@ PAYLOAD_SAVE_DIR = os.environ.get('PAYLOAD_SAVE_DIR', str(pathlib.Path.home() / 
 # Timeouts and Polling Intervals (in seconds)
 DEFAULT_CONSOLE_READ_TIMEOUT = 15  # Default for quick console commands
 LONG_CONSOLE_READ_TIMEOUT = 60   # For commands like run/exploit/check
-SESSION_COMMAND_TIMEOUT = 60     # Default for commands within sessions
-SESSION_READ_INACTIVITY_TIMEOUT = 10 # Timeout if no data from session
-EXPLOIT_SESSION_POLL_TIMEOUT = 60 # Max time to wait for session after exploit job
-EXPLOIT_SESSION_POLL_INTERVAL = 2  # How often to check for session
-RPC_CALL_TIMEOUT = 30  # Default timeout for RPC calls like listing modules
+SESSION_COMMAND_TIMEOUT = 15     # Default for commands within sessions
+SESSION_READ_INACTIVITY_TIMEOUT = 6 # Timeout if no data from session
+EXPLOIT_SESSION_POLL_TIMEOUT = 120 # Max time to wait for session after exploit job
+EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
+RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
@@ -222,7 +222,15 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
 
     try:
         logger.debug(f"Running console command: {cmd}")
+        write_start_time = asyncio.get_event_loop().time()
         await asyncio.to_thread(lambda: console.write(cmd + '\n'))
+        write_duration = asyncio.get_event_loop().time() - write_start_time
+        logger.debug(f"Console write completed for '{cmd}' in {write_duration:.3f}s")
+
+        # For "set" commands, don't wait for console output as they produce none
+        if cmd.strip().startswith("set "):
+            logger.debug(f"Skipping console output wait for 'set' command: {cmd}")
+            return ""
 
         output_buffer = b"" # Read as bytes to handle potential encoding issues and prompt matching
         start_time = asyncio.get_event_loop().time()
@@ -237,6 +245,7 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         last_progress_time = start_time
         total_chunks_read = 0
         total_bytes_read = 0
+        timed_out = False  # Track if we exit due to timeout
         
         logger.info(f"Starting console command execution: '{cmd}' (timeout: {read_timeout}s)")
         
@@ -258,6 +267,7 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
             if elapsed_time > read_timeout:
                  logger.warning(f"Overall timeout ({read_timeout}s) reached for console command '{cmd}'. "
                               f"Total chunks: {total_chunks_read}, bytes: {total_bytes_read}")
+                 timed_out = True
                  break
 
             # Read available data
@@ -270,6 +280,11 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
                 # Handle the prompt - ensure it's bytes for pattern matching
                 prompt_str = chunk_result.get('prompt', '')
                 prompt_bytes = prompt_str.encode('utf-8', errors='replace') if isinstance(prompt_str, str) else prompt_str
+                
+                # Enhanced debug logging for timeout analysis
+                if chunk_data or is_busy or prompt_str:
+                    logger.debug(f"Console read result for '{cmd}' at {elapsed_time:.1f}s: "
+                               f"data_len={len(chunk_data)}, busy={is_busy}, prompt='{prompt_str[:50]}...' if len(prompt_str) > 50 else prompt_str")
                 
                 # Log console busy state periodically
                 if is_busy and (current_time - last_progress_time) >= (progress_interval - 1):
@@ -284,6 +299,10 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
                 chunk_size = len(chunk_data)
                 total_chunks_read += 1
                 total_bytes_read += chunk_size
+                
+                # Log first data received
+                if total_chunks_read == 1:
+                    logger.debug(f"First data received for '{cmd}' after {elapsed_time:.3f}s: {chunk_size} bytes")
                 
                 # Log significant data chunks
                 if chunk_size > 100:
@@ -314,12 +333,19 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         final_output = output_buffer.decode('utf-8', errors='replace').strip()
         total_execution_time = asyncio.get_event_loop().time() - start_time
         
-        logger.info(f"Console command '{cmd}' completed successfully in {total_execution_time:.1f}s. "
-                   f"Read {total_chunks_read} chunks, {total_bytes_read} bytes, "
-                   f"output length: {len(final_output)} chars")
-        
-        logger.debug(f"Final output for '{cmd}' (length {len(final_output)}):\n{final_output[:500]}{'...' if len(final_output) > 500 else ''}")
-        return final_output
+        # Handle timeout vs normal completion
+        if timed_out:
+            logger.error(f"Console command '{cmd}' TIMED OUT after {total_execution_time:.1f}s (limit: {read_timeout}s). "
+                        f"Read {total_chunks_read} chunks, {total_bytes_read} bytes, "
+                        f"output length: {len(final_output)} chars")
+            logger.debug(f"Timeout output for '{cmd}' (length {len(final_output)}):\n{final_output[:500]}{'...' if len(final_output) > 500 else ''}")
+            return f"TIMEOUT_ERROR: Command '{cmd}' exceeded {read_timeout}s timeout after {total_execution_time:.1f}s. Output: {final_output}"
+        else:
+            logger.info(f"Console command '{cmd}' completed successfully in {total_execution_time:.1f}s. "
+                       f"Read {total_chunks_read} chunks, {total_bytes_read} bytes, "
+                       f"output length: {len(final_output)} chars")
+            logger.debug(f"Final output for '{cmd}' (length {len(final_output)}):\n{final_output[:500]}{'...' if len(final_output) > 500 else ''}")
+            return final_output
 
     except Exception as e:
         elapsed_time = asyncio.get_event_loop().time() - start_time
@@ -569,9 +595,11 @@ async def _execute_module_rpc(
 
             return {"status": "unknown", "message": f"{module_type.capitalize()} executed, but no job ID returned.", "result": exec_result, "module": full_module_path}
 
-        # --- Exploit Specific: Poll for Session ---
+        # --- Exploit Specific: Poll for Session (skip for handlers) ---
         found_session_id = None
-        if module_type == 'exploit' and uuid:
+        is_handler_module = 'handler' in full_module_path.lower()
+        
+        if module_type == 'exploit' and uuid and not is_handler_module:
              start_time = asyncio.get_event_loop().time()
              logger.info(f"Exploit job {job_id} (UUID: {uuid}) started. Polling for session (timeout: {EXPLOIT_SESSION_POLL_TIMEOUT}s)...")
              while (asyncio.get_event_loop().time() - start_time) < EXPLOIT_SESSION_POLL_TIMEOUT:
@@ -600,12 +628,17 @@ async def _execute_module_rpc(
 
              if found_session_id is None:
                  logger.warning(f"Polling timeout ({EXPLOIT_SESSION_POLL_TIMEOUT}s) reached for job {job_id}, no matching session found.")
+        elif is_handler_module:
+             logger.info(f"Handler job {job_id} started successfully. No session polling needed - handler will wait for connections.")
 
         # --- Construct Final Success/Warning Message ---
         message = f"{module_type.capitalize()} module {full_module_path} started as job {job_id}."
         status = "success"
         if module_type == 'exploit':
-            if found_session_id is not None:
+            if is_handler_module:
+                 # Handlers are always successful - they wait for connections
+                 message += " Handler is waiting for connections."
+            elif found_session_id is not None:
                  message += f" Session {found_session_id} created."
             else:
                  message += " No session detected within timeout."
