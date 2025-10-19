@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # --- Third-party Libraries ---
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from pymetasploit3.msfrpc import MsfConsole, MsfRpcClient, MsfRpcError
 
 # --- Configuration & Constants ---
