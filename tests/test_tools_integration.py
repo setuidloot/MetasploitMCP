@@ -14,32 +14,8 @@ from typing import Dict, Any
 # Add the parent directory to the path to import MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-# Mock the dependencies that aren't available in test environment
-sys.modules['uvicorn'] = Mock()
-sys.modules['fastapi'] = Mock()
-sys.modules['starlette.applications'] = Mock()
-sys.modules['starlette.routing'] = Mock()
-
-# Create a special mock for FastMCP that preserves the tool decorator behavior
-class MockFastMCP:
-    def __init__(self, *args, **kwargs):
-        pass
-    
-    def tool(self):
-        # Return a decorator that just returns the original function
-        def decorator(func):
-            return func
-        return decorator
-
-# Mock the MCP modules with our custom FastMCP
-mcp_server_fastmcp = Mock()
-mcp_server_fastmcp.FastMCP = MockFastMCP
-sys.modules['mcp.server.fastmcp'] = mcp_server_fastmcp
-sys.modules['mcp.server.sse'] = Mock()
-sys.modules['mcp.server.session'] = Mock()
-
-# Mock pymetasploit3 module
-sys.modules['pymetasploit3.msfrpc'] = Mock()
+# Mock pymetasploit3 module BEFORE importing MetasploitMCP
+# We need to set up complete mock classes first
 
 # Create comprehensive mock classes
 class MockMsfRpcClient:
@@ -103,18 +79,33 @@ sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 # Import the module and then get the actual functions
 import MetasploitMCP
 
-# Get the actual functions (not mocked)
-list_exploits = MetasploitMCP.list_exploits
-list_payloads = MetasploitMCP.list_payloads
-generate_payload = MetasploitMCP.generate_payload
-run_exploit = MetasploitMCP.run_exploit
-run_post_module = MetasploitMCP.run_post_module
-run_auxiliary_module = MetasploitMCP.run_auxiliary_module
-list_active_sessions = MetasploitMCP.list_active_sessions
-send_session_command = MetasploitMCP.send_session_command
-start_listener = MetasploitMCP.start_listener
-stop_job = MetasploitMCP.stop_job
-terminate_session = MetasploitMCP.terminate_session
+# Helper function to unwrap FastMCP decorated functions
+def unwrap_tool(tool_obj):
+    """Unwrap a FastMCP tool to get the underlying function."""
+    # Try different attributes where the actual function might be stored
+    for attr in ['func', '__wrapped__', '_func', 'fn']:
+        if hasattr(tool_obj, attr):
+            return getattr(tool_obj, attr)
+    # If it's already callable, return as-is
+    if callable(tool_obj):
+        return tool_obj
+    # Last resort: try to get the function from the tool's internals
+    if hasattr(tool_obj, '__dict__') and 'func' in tool_obj.__dict__:
+        return tool_obj.__dict__['func']
+    return tool_obj
+
+# Get the actual functions (unwrapped from FastMCP decorators)
+list_exploits = unwrap_tool(MetasploitMCP.list_exploits)
+list_payloads = unwrap_tool(MetasploitMCP.list_payloads)
+generate_payload = unwrap_tool(MetasploitMCP.generate_payload)
+run_exploit = unwrap_tool(MetasploitMCP.run_exploit)
+run_post_module = unwrap_tool(MetasploitMCP.run_post_module)
+run_auxiliary_module = unwrap_tool(MetasploitMCP.run_auxiliary_module)
+list_active_sessions = unwrap_tool(MetasploitMCP.list_active_sessions)
+send_session_command = unwrap_tool(MetasploitMCP.send_session_command)
+start_listener = unwrap_tool(MetasploitMCP.start_listener)
+stop_job = unwrap_tool(MetasploitMCP.stop_job)
+terminate_session = unwrap_tool(MetasploitMCP.terminate_session)
 
 
 class TestExploitListingTools:
@@ -232,6 +223,88 @@ class TestExploitListingTools:
         assert isinstance(result, list)
         assert len(result) == 1
         assert 'x86' in result[0]
+
+    @pytest.mark.asyncio
+    async def test_list_payloads_with_exploit_module(self, mock_asyncio_to_thread):
+        """Test listing payloads compatible with an exploit module."""
+        # Create mock client
+        client = MockMsfRpcClient()
+        
+        # Create a mock module with compatible_payloads
+        mock_module = MockMsfModule('exploit/windows/smb/ms17_010_eternalblue')
+        mock_module.compatible_payloads = [
+            'windows/x64/meterpreter/reverse_tcp',
+            'windows/x64/meterpreter/bind_tcp',
+            'windows/x64/shell/reverse_tcp'
+        ]
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                result = await list_payloads(exploit_module="windows/smb/ms17_010_eternalblue")
+        
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert 'windows/x64/meterpreter/reverse_tcp' in result
+        assert 'windows/x64/meterpreter/bind_tcp' in result
+
+    @pytest.mark.asyncio
+    async def test_list_payloads_with_exploit_module_and_filters(self, mock_asyncio_to_thread):
+        """Test listing payloads with exploit module and additional filters."""
+        # Create mock client
+        client = MockMsfRpcClient()
+        
+        mock_module = MockMsfModule('exploit/windows/smb/ms17_010_eternalblue')
+        mock_module.compatible_payloads = [
+            'windows/x64/meterpreter/reverse_tcp',
+            'windows/x64/meterpreter/bind_tcp',
+            'windows/x64/shell/reverse_tcp',
+            'windows/meterpreter/reverse_tcp'  # x86 version
+        ]
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                result = await list_payloads(exploit_module="windows/smb/ms17_010_eternalblue", arch="x64")
+        
+        assert isinstance(result, list)
+        assert len(result) == 3
+        # Should only include x64 payloads
+        assert all('x64' in payload for payload in result)
+
+    @pytest.mark.asyncio
+    async def test_list_payloads_with_invalid_exploit_module(self, mock_asyncio_to_thread):
+        """Test listing payloads with invalid exploit module."""
+        # Create mock client
+        client = MockMsfRpcClient()
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', side_effect=ValueError("Module not found")):
+                result = await list_payloads(exploit_module="invalid/exploit/name")
+        
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "Error" in result[0]
+        assert "not found" in result[0]
+
+    @pytest.mark.asyncio
+    async def test_list_payloads_exploit_module_no_compatible_payloads_attr(self, mock_asyncio_to_thread):
+        """Test listing payloads when module doesn't support compatible_payloads."""
+        # Create mock client
+        client = MockMsfRpcClient()
+        client.modules.payloads = [
+            'cmd/unix/reverse',
+            'cmd/unix/bind_netcat'
+        ]
+        
+        mock_module = MockMsfModule('exploit/unix/ftp/vsftpd_234_backdoor')
+        # Don't set compatible_payloads attribute to simulate older MSF versions
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                result = await list_payloads(exploit_module="unix/ftp/vsftpd_234_backdoor")
+        
+        # Should fall back to listing all payloads
+        assert isinstance(result, list)
+        assert len(result) == 2
 
 
 class TestPayloadGeneration:
@@ -406,6 +479,58 @@ class TestExploitExecution:
         assert result["status"] == "success"
         mock_console.assert_called_once()
         mock_rpc.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_exploit_invalid_payload_error_message_rpc(self, mock_asyncio_to_thread):
+        """Test that invalid payload error includes helpful suggestion (RPC mode)."""
+        client = MockMsfRpcClient()
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
+                # Simulate an invalid payload error
+                mock_rpc.return_value = {
+                    "status": "error",
+                    "message": "Invalid payload specified: linux/x86/shell/reverse_tcp. To view compatible payloads for this exploit, use: list_payloads(exploit_module='windows/smb/ms17_010_eternalblue')."
+                }
+                
+                result = await run_exploit(
+                    module_name="windows/smb/ms17_010_eternalblue",
+                    options={"RHOSTS": "192.168.1.1"},
+                    payload_name="linux/x86/shell/reverse_tcp",  # Invalid for Windows exploit
+                    payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
+                    run_as_job=True
+                )
+        
+        assert result["status"] == "error"
+        assert "list_payloads" in result["message"]
+        assert "exploit_module" in result["message"]
+        assert "ms17_010_eternalblue" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_run_exploit_invalid_payload_error_message_console(self, mock_asyncio_to_thread):
+        """Test that invalid payload error includes helpful suggestion (Console mode)."""
+        client = MockMsfRpcClient()
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._execute_module_console') as mock_console:
+                # Simulate console output with invalid payload error
+                mock_console.return_value = {
+                    "status": "error",
+                    "message": "Error during setup command 'set PAYLOAD linux/x86/shell/reverse_tcp': [-] Error setting option PAYLOAD\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='windows/smb/ms17_010_eternalblue')",
+                    "module": "exploit/windows/smb/ms17_010_eternalblue"
+                }
+                
+                result = await run_exploit(
+                    module_name="windows/smb/ms17_010_eternalblue",
+                    options={"RHOSTS": "192.168.1.1"},
+                    payload_name="linux/x86/shell/reverse_tcp",
+                    payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
+                    run_as_job=False  # Console mode
+                )
+        
+        assert result["status"] == "error"
+        assert "list_payloads" in result["message"]
+        assert "exploit_module" in result["message"]
 
 
 class TestSessionManagement:
