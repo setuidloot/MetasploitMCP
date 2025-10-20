@@ -13,16 +13,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 def pytest_configure(config):
     """Configure pytest with custom settings."""
-    # Mock external dependencies that might not be available
+    # Mock external dependencies that might not be available during testing
+    # We only mock pymetasploit3 since other dependencies (fastmcp, uvicorn, etc.) 
+    # are now proper installed dependencies
     mock_modules = [
-        'uvicorn',
-        'fastapi', 
-        'mcp.server.fastmcp',
-        'mcp.server.sse',
         'pymetasploit3.msfrpc',
-        'starlette.applications',
-        'starlette.routing',
-        'mcp.server.session'
     ]
     
     for module in mock_modules:
@@ -153,5 +148,9 @@ def pytest_runtest_setup(item):
 @pytest.fixture(autouse=True)
 def reset_msf_client():
     """Automatically reset the global MSF client between tests."""
-    with patch('MetasploitMCP._msf_client_instance', None):
+    # Only patch if MetasploitMCP is already imported
+    if 'MetasploitMCP' in sys.modules:
+        with patch.object(sys.modules['MetasploitMCP'], '_msf_client_instance', None):
+            yield
+    else:
         yield
