@@ -882,21 +882,23 @@ async def list_exploits(search_term: str = "") -> List[str]:
         return [f"Error: Unexpected error listing exploits: {e}"]
 
 @mcp.tool()
-async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "") -> List[str]:
+async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "") -> List[str]:
     """
-    List available Metasploit payloads, optionally filtered by platform, architecture, and/or exploit module compatibility.
+    List available Metasploit payloads, optionally filtered by platform, architecture, exploit module compatibility, and/or search term.
 
     Args:
         platform: Optional platform filter (e.g., 'windows', 'linux', 'python', 'php').
         arch: Optional architecture filter (e.g., 'x86', 'x64', 'cmd', 'meterpreter').
         exploit_module: Optional exploit module name to list only compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
                        When provided, only payloads compatible with this exploit module will be returned.
+        search_term: Optional search term to filter payloads by name (e.g., 'meterpreter', 'cmd/linux', 'reverse_tcp').
+                    Supports partial matches and wildcards (*). Case-insensitive.
 
     Returns:
         List of payload names matching filters (max 100). If exploit_module is provided, returns compatible payloads for that module.
     """
     client = get_msf_client()
-    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}')")
+    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}', search: '{search_term or 'Any'}')")
     
     try:
         # If exploit_module is provided, get compatible payloads for that module
@@ -923,13 +925,9 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 logger.error(f"Exploit module '{exploit_module}' not found: {ve}")
                 return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
             except AttributeError:
-                # If compatible_payloads doesn't exist, fall back to getting all payloads and filtering
-                logger.warning(f"Module object for '{exploit_module}' doesn't support compatible_payloads. Falling back to listing all payloads.")
-                payloads = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: client.modules.payloads),
-                    timeout=RPC_CALL_TIMEOUT
-                )
-                filtered = payloads
+                # If compatible_payloads doesn't exist, inform the caller
+                logger.error(f"Module object for '{exploit_module}' doesn't support compatible_payloads method.")
+                return [f"Error: Exploit module '{exploit_module}' doesn't support querying compatible payloads. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
         else:
             # Add timeout to prevent hanging on slow/unresponsive MSF server
             logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
@@ -949,6 +947,17 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
             arch_lower = arch.lower()
             # Match architecture more flexibly (e.g., '/x64/', 'meterpreter')
             filtered = [p for p in filtered if f"/{arch_lower}/" in p.lower() or arch_lower in p.lower().split('/')]
+        
+        # Apply search_term filter if provided
+        if search_term:
+            search_lower = search_term.lower()
+            # Support wildcards by converting * to .* for regex matching
+            if '*' in search_lower:
+                pattern = re.compile(search_lower.replace('*', '.*'))
+                filtered = [p for p in filtered if pattern.search(p.lower())]
+            else:
+                # Simple substring match
+                filtered = [p for p in filtered if search_lower in p.lower()]
 
         count = len(filtered)
         limit = 100

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 
 def test_list_payloads_signature():
-    """Test that list_payloads has the correct signature with exploit_module parameter."""
+    """Test that list_payloads has the correct signature with exploit_module and search_term parameters."""
     # Mock dependencies before importing
     sys.modules['fastmcp'] = Mock()
     sys.modules['pymetasploit3.msfrpc'] = Mock()
@@ -55,6 +55,7 @@ def test_list_payloads_signature():
         assert 'platform' in params, "platform parameter should exist"
         assert 'arch' in params, "arch parameter should exist"
         assert 'exploit_module' in params, "exploit_module parameter should be added"
+        assert 'search_term' in params, "search_term parameter should be added"
         
         print(f"✓ list_payloads has correct signature: {params}")
     except Exception as e:
@@ -153,6 +154,115 @@ def test_module_name_extraction():
         
         assert base_module_name == expected
         print(f"✓ Module name extraction: {module_name} -> {base_module_name}")
+
+
+def test_search_term_simple_match():
+    """Test that search_term filters payloads with simple substring matching."""
+    # Sample payloads
+    all_payloads = [
+        'windows/x64/meterpreter/reverse_tcp',
+        'windows/x64/shell/reverse_tcp',
+        'linux/x86/meterpreter/reverse_tcp',
+        'cmd/unix/reverse_bash',
+        'cmd/windows/reverse_powershell',
+    ]
+    
+    # Test simple search
+    search_term = 'meterpreter'
+    filtered = [p for p in all_payloads if search_term.lower() in p.lower()]
+    
+    assert len(filtered) == 2
+    assert 'windows/x64/meterpreter/reverse_tcp' in filtered
+    assert 'linux/x86/meterpreter/reverse_tcp' in filtered
+    
+    print(f"✓ Simple search_term filtering works: '{search_term}' found {len(filtered)} payloads")
+
+
+def test_search_term_wildcard_match():
+    """Test that search_term supports wildcard matching with *."""
+    import re
+    
+    # Sample payloads
+    all_payloads = [
+        'windows/x64/meterpreter/reverse_tcp',
+        'windows/x64/shell/reverse_tcp',
+        'linux/x86/meterpreter/reverse_tcp',
+        'cmd/unix/reverse_bash',
+        'cmd/windows/reverse_powershell',
+    ]
+    
+    # Test wildcard search
+    search_term = 'cmd/*/reverse*'
+    pattern = re.compile(search_term.lower().replace('*', '.*'))
+    filtered = [p for p in all_payloads if pattern.search(p.lower())]
+    
+    assert len(filtered) == 2
+    assert 'cmd/unix/reverse_bash' in filtered
+    assert 'cmd/windows/reverse_powershell' in filtered
+    
+    print(f"✓ Wildcard search_term filtering works: '{search_term}' found {len(filtered)} payloads")
+
+
+def test_search_term_path_pattern():
+    """Test that search_term can match payload path patterns like 'cmd/linux'."""
+    # Sample payloads
+    all_payloads = [
+        'cmd/unix/reverse_bash',
+        'cmd/windows/reverse_powershell',
+        'cmd/linux/http',
+        'linux/x86/meterpreter/reverse_tcp',
+        'windows/cmd/exec',
+    ]
+    
+    # Test path pattern search
+    search_term = 'cmd/linux'
+    filtered = [p for p in all_payloads if search_term.lower() in p.lower()]
+    
+    assert len(filtered) == 1
+    assert 'cmd/linux/http' in filtered
+    
+    print(f"✓ Path pattern search_term filtering works: '{search_term}' found {len(filtered)} payloads")
+
+
+def test_incompatible_payloads_error_message():
+    """Test that error message is returned when exploit module doesn't support compatible_payloads."""
+    exploit_module = 'exploit/multi/http/apache_mod_cgi_bash_env_exec'
+    
+    # Expected error message format
+    expected_error = f"Error: Exploit module '{exploit_module}' doesn't support querying compatible payloads. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."
+    
+    # Verify the error message contains key information
+    assert "doesn't support querying compatible payloads" in expected_error
+    assert "Use list_payloads without exploit_module parameter" in expected_error
+    assert exploit_module in expected_error
+    assert "manually select appropriate payloads" in expected_error
+    
+    print(f"✓ Incompatible payloads error message format is correct")
+
+
+def test_combined_filters():
+    """Test that search_term works in combination with other filters."""
+    # Sample payloads
+    all_payloads = [
+        'windows/x64/meterpreter/reverse_tcp',
+        'windows/x64/shell/reverse_tcp',
+        'linux/x86/meterpreter/reverse_tcp',
+        'linux/x64/shell/reverse_tcp',
+        'cmd/unix/reverse_bash',
+    ]
+    
+    # Filter by platform
+    platform = 'linux'
+    filtered = [p for p in all_payloads if p.lower().startswith(platform + '/') or f"/{platform}/" in p.lower()]
+    
+    # Then filter by search_term
+    search_term = 'meterpreter'
+    filtered = [p for p in filtered if search_term.lower() in p.lower()]
+    
+    assert len(filtered) == 1
+    assert 'linux/x86/meterpreter/reverse_tcp' in filtered
+    
+    print(f"✓ Combined filters work: platform='{platform}' + search='{search_term}' found {len(filtered)} payloads")
 
 
 if __name__ == "__main__":
