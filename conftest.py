@@ -16,13 +16,22 @@ def pytest_configure(config):
     # Mock external dependencies that might not be available during testing
     # We only mock pymetasploit3 since other dependencies (fastmcp, uvicorn, etc.) 
     # are now proper installed dependencies
-    mock_modules = [
-        'pymetasploit3.msfrpc',
-    ]
     
-    for module in mock_modules:
-        if module not in sys.modules:
-            sys.modules[module] = Mock()
+    # Create proper exception class for MsfRpcError
+    class MockMsfRpcError(Exception):
+        """Mock MSF RPC error that properly inherits from Exception."""
+        pass
+    
+    # Create mock module with proper exception class
+    mock_msfrpc = Mock()
+    mock_msfrpc.MsfRpcError = MockMsfRpcError
+    mock_msfrpc.MsfRpcClient = Mock
+    mock_msfrpc.MsfConsole = Mock
+    
+    if 'pymetasploit3.msfrpc' not in sys.modules:
+        sys.modules['pymetasploit3.msfrpc'] = mock_msfrpc
+    if 'pymetasploit3' not in sys.modules:
+        sys.modules['pymetasploit3'] = Mock(msfrpc=mock_msfrpc)
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers automatically."""
