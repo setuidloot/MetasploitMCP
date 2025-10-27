@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Job Cleanup on Session Termination**: `terminate_session()` now automatically kills associated handler jobs to release ports
+  - New `kill_associated_job` parameter (default: True) controls whether to kill handler job
+  - Searches for job_id in session info and terminates it
+  - Returns count of jobs killed in response
+  - Releases ports that would otherwise remain bound after session termination
+- **`kill_all_handler_jobs()` Tool**: New MCP tool to kill all active handler jobs
+  - Finds all exploit/multi/handler jobs
+  - Kills them to release bound ports
+  - Returns detailed statistics (killed count, failed, still running)
+  - Useful for cleaning up after failed exploits or test runs
+- **Port Availability Checking**: MetasploitMCP now validates that LPORT is available before attempting to bind listeners
+  - `check_port_available()` helper function checks if a port can be bound on specified interface
+  - Pre-flight port validation in `start_listener()` - returns clear error if port is already in use
+  - Pre-flight port validation in `run_exploit()` - checks LPORT in payload_options before running
+  - Optional port validation in `generate_payload()` - logs warning if port is unavailable
+  - Provides early, actionable error messages instead of cryptic bind failures from Metasploit
+- **Metasploitable 3 Test Harness**: Comprehensive integration testing tool that acts as an MCP client to test the full MetasploitMCP server stack against real vulnerable targets
+  - Tests 6 major Metasploitable 3 vulnerabilities (ProFTPD, Shellshock, Drupal, phpMyAdmin, Rails, UnrealIRCd)
+  - **Automatic Session Cleanup**: Kills all active sessions before running tests to free up ports (prevents port conflicts)
+  - `--no-cleanup` flag to skip session cleanup and preserve existing sessions
+  - Automated session detection and verification
+  - Detailed test reporting with timing metrics
+  - Configurable target, LHOST, and LPORT parameters
+  - Comprehensive unit tests with 92% coverage
+- **Testing Documentation**:
+  - `docs/METASPLOITABLE3_TESTING.md` - Complete reference guide
+  - `docs/QUICK_START_TESTING.md` - Fast setup guide
+  - `INTEGRATION_TEST_SETUP.md` - Step-by-step walkthrough
+- **Testing Tools**:
+  - `metasploitable3_test_harness.py` - Main test harness (MCP client)
+  - `tests/test_metasploitable3_harness.py` - Comprehensive unit tests
+  - `examples/metasploitable3_quicktest.sh` - Quick verification script
+- **Makefile Targets**:
+  - `make test-harness` - Run harness unit tests
+  - `make test-metasploitable3` - Run integration tests
+  - `make test-metasploitable3-quick` - Quick single-test verification
+  - `make list-metasploitable3-tests` - List available tests
+- **Dependencies**:
+  - Added `httpx>=0.24.0` for MCP client HTTP communication
 - Poetry dependency management with `pyproject.toml`
 - Comprehensive documentation in `docs/` directory
 - Modern `.gitignore` with comprehensive Python project exclusions
@@ -22,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **BREAKING**: Migrated from requirements.txt to Poetry for dependency management
 - **BREAKING**: Converted from SSE transport to FastMCP HTTP transport
+- Updated test harness to use correct `/mcp` endpoint (was incorrectly using `/mcp/sse`)
 - Default bind address for listeners now defaults to `0.0.0.0` instead of LHOST
 - Improved error handling and logging throughout
 - Enhanced test coverage with integration and unit tests

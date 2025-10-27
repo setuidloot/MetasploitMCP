@@ -45,6 +45,8 @@ black = ">=23.0.0"
 flake8 = ">=6.0.0"
 mypy = ">=1.0.0"
 pre-commit = ">=3.0.0"
+httpx = ">=0.24.0"
+langchain-mcp-adapters = ">=0.1.0"
 
 [tool.poetry.scripts]
 metasploit-mcp = "MetasploitMCP:main"

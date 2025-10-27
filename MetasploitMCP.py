@@ -1072,6 +1072,26 @@ async def generate_payload(
         if not (1 <= reverse_listener_bind_port <= 65535):
             return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
         parsed_options['ReverseListenerBindPort'] = reverse_listener_bind_port
+    
+    # Check LPORT availability if it's a reverse payload (optional warning for payload generation)
+    # This provides early feedback even though the actual bind happens when the payload runs/listener starts
+    if 'LPORT' in parsed_options:
+        lport_value = parsed_options['LPORT']
+        try:
+            lport_int = int(lport_value)
+            # Determine the bind address and port for checking
+            check_bind_address = parsed_options.get('ReverseListenerBindAddress', '0.0.0.0')
+            check_bind_port = parsed_options.get('ReverseListenerBindPort', lport_int)
+            
+            # Check port availability (as a warning, not blocking)
+            port_available, port_error = check_port_available(check_bind_port, check_bind_address)
+            if not port_available:
+                logger.warning(f"Port check during payload generation: {port_error}. "
+                              f"This payload will need a listener on {check_bind_address}:{check_bind_port}")
+                # Note: Not returning error here since payload generation itself doesn't bind the port
+                # The port will be needed when start_listener() or run_exploit() is called later
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Could not validate LPORT value '{lport_value}' during payload generation: {e}")
 
     try:
         # Get the payload module object
@@ -1255,6 +1275,22 @@ async def run_exploit(
     payload_spec = None
     if payload_name:
         payload_spec = {"name": payload_name, "options": parsed_payload_options}
+        
+        # Check if LPORT is provided and if the port is available
+        if 'LPORT' in parsed_payload_options:
+            lport_value = parsed_payload_options['LPORT']
+            try:
+                lport_int = int(lport_value)
+                # Determine bind address for port check
+                bind_address = parsed_payload_options.get('ReverseListenerBindAddress', '0.0.0.0')
+                bind_port = parsed_payload_options.get('ReverseListenerBindPort', lport_int)
+                
+                # Check if port is available
+                port_available, port_error = check_port_available(bind_port, bind_address)
+                if not port_available:
+                    return {"status": "error", "message": f"Cannot run exploit: {port_error}"}
+            except (ValueError, TypeError) as e:
+                return {"status": "error", "message": f"Invalid LPORT value '{lport_value}': {e}"}
 
     if check_vulnerability:
         logger.info(f"Performing vulnerability check first for {module_name}...")
@@ -1866,6 +1902,11 @@ async def start_listener(
     is_valid, error_msg = validate_bind_address(bind_address)
     if not is_valid:
         return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
+    
+    # Check if the port is available before trying to bind
+    port_available, port_error = check_port_available(bind_port, bind_address)
+    if not port_available:
+        return {"status": "error", "message": f"Cannot start listener: {port_error}"}
 
     # Parse additional options gracefully
     try:
@@ -1965,26 +2006,136 @@ async def stop_job(job_id: int) -> Dict[str, Any]:
         return {"status": "error", "message": f"Unexpected server error stopping job {job_id}: {e}"}
 
 @mcp.tool()
-async def terminate_session(session_id: int) -> Dict[str, Any]:
+async def kill_all_handler_jobs() -> Dict[str, Any]:
+    """
+    Kill all active handler jobs (exploit/multi/handler).
+    Useful for cleaning up after failed exploits or test runs.
+    
+    Returns:
+        Dictionary with status, count of killed jobs, and details.
+    """
+    client = get_msf_client()
+    logger.info("Killing all handler jobs to release ports")
+    
+    try:
+        # Get all active jobs
+        jobs = await asyncio.to_thread(lambda: client.jobs.list)
+        
+        if not jobs:
+            logger.info("No active jobs to kill")
+            return {
+                "status": "success",
+                "message": "No active jobs found",
+                "handlers_killed": 0,
+                "total_jobs": 0
+            }
+        
+        logger.info(f"Found {len(jobs)} active job(s)")
+        
+        # Find handler jobs
+        handler_jobs = {}
+        for job_id, job_info in jobs.items():
+            if isinstance(job_info, dict):
+                job_name = job_info.get('name', '').lower()
+                # Check if it's a handler job
+                if 'exploit/multi/handler' in job_name or 'handler' in job_name:
+                    handler_jobs[job_id] = job_info
+                    logger.debug(f"Found handler job {job_id}: {job_info.get('name')}")
+        
+        if not handler_jobs:
+            logger.info("No handler jobs found")
+            return {
+                "status": "success",
+                "message": f"No handler jobs found among {len(jobs)} active job(s)",
+                "handlers_killed": 0,
+                "total_jobs": len(jobs)
+            }
+        
+        logger.info(f"Found {len(handler_jobs)} handler job(s) to kill")
+        
+        # Kill each handler job
+        killed_count = 0
+        failed_jobs = []
+        
+        for job_id in handler_jobs.keys():
+            try:
+                logger.info(f"Killing handler job {job_id}...")
+                await asyncio.to_thread(lambda jid=job_id: client.jobs.stop(str(jid)))
+                killed_count += 1
+                logger.info(f"✓ Killed handler job {job_id}")
+            except Exception as e:
+                logger.warning(f"Failed to kill handler job {job_id}: {e}")
+                failed_jobs.append({"job_id": job_id, "error": str(e)})
+        
+        # Verify jobs are gone
+        await asyncio.sleep(1.0)
+        jobs_after = await asyncio.to_thread(lambda: client.jobs.list)
+        
+        still_running = []
+        for job_id in handler_jobs.keys():
+            if job_id in jobs_after:
+                still_running.append(job_id)
+        
+        if still_running:
+            logger.warning(f"{len(still_running)} handler job(s) still running after kill attempt: {still_running}")
+        
+        result_message = f"Killed {killed_count}/{len(handler_jobs)} handler job(s)"
+        if failed_jobs:
+            result_message += f", {len(failed_jobs)} failed"
+        if still_running:
+            result_message += f", {len(still_running)} still running"
+        
+        return {
+            "status": "success" if killed_count > 0 else "warning",
+            "message": result_message,
+            "handlers_killed": killed_count,
+            "handlers_found": len(handler_jobs),
+            "total_jobs": len(jobs),
+            "failed": failed_jobs if failed_jobs else [],
+            "still_running": still_running if still_running else []
+        }
+        
+    except Exception as e:
+        logger.exception("Error killing handler jobs")
+        return {
+            "status": "error",
+            "message": f"Error killing handler jobs: {e}",
+            "handlers_killed": 0
+        }
+
+@mcp.tool()
+async def terminate_session(session_id: int, kill_associated_job: bool = True) -> Dict[str, Any]:
     """
     Forcefully terminate a Metasploit session using the session.stop() method.
+    Optionally kills the associated handler job to release ports.
     
     Args:
         session_id: ID of the session to terminate.
+        kill_associated_job: If True, also kill the handler job that created this session (default: True).
         
     Returns:
         Dictionary with status and result message.
     """
     client = get_msf_client()
     session_id_str = str(session_id)
-    logger.info(f"Terminating session {session_id}")
+    logger.info(f"Terminating session {session_id} (kill_associated_job={kill_associated_job})")
     
     try:
-        # Check if session exists
+        # Check if session exists and get session info
         current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
         if session_id_str not in current_sessions:
             logger.error(f"Session {session_id} not found.")
             return {"status": "error", "message": f"Session {session_id} not found."}
+        
+        session_info = current_sessions[session_id_str]
+        logger.debug(f"Session {session_id} info: {session_info}")
+        
+        # Try to find the associated job ID from session info
+        # Sessions created by handlers typically have via_exploit and via_payload info
+        associated_job_id = None
+        if isinstance(session_info, dict):
+            # Check if there's a job_id field (not always present)
+            associated_job_id = session_info.get('job_id')
             
         # Get a handle to the session
         session = await asyncio.to_thread(lambda: client.sessions.session(session_id_str))
@@ -1996,12 +2147,70 @@ async def terminate_session(session_id: int) -> Dict[str, Any]:
         await asyncio.sleep(1.0)  # Give MSF time to process termination
         current_sessions_after = await asyncio.to_thread(lambda: client.sessions.list)
         
-        if session_id_str not in current_sessions_after:
+        session_terminated = session_id_str not in current_sessions_after
+        result_messages = []
+        
+        if session_terminated:
             logger.info(f"Successfully terminated session {session_id}")
-            return {"status": "success", "message": f"Session {session_id} terminated successfully."}
+            result_messages.append(f"Session {session_id} terminated successfully")
         else:
             logger.warning(f"Session {session_id} still appears in the sessions list after termination attempt.")
-            return {"status": "warning", "message": f"Session {session_id} may not have been terminated properly."}
+            result_messages.append(f"Session {session_id} may not have been terminated properly")
+        
+        # Kill associated handler job if requested
+        jobs_killed = 0
+        if kill_associated_job:
+            try:
+                # Get all active jobs
+                jobs = await asyncio.to_thread(lambda: client.jobs.list)
+                logger.debug(f"Active jobs: {list(jobs.keys())}")
+                
+                # If we have a specific job_id, try to kill it
+                if associated_job_id and str(associated_job_id) in jobs:
+                    logger.info(f"Killing associated job {associated_job_id} for session {session_id}")
+                    try:
+                        await asyncio.to_thread(lambda: client.jobs.stop(str(associated_job_id)))
+                        await asyncio.sleep(0.5)  # Give time to stop
+                        jobs_killed += 1
+                        result_messages.append(f"Killed associated job {associated_job_id}")
+                    except Exception as job_e:
+                        logger.warning(f"Failed to kill job {associated_job_id}: {job_e}")
+                else:
+                    # Try to find handler jobs that might be associated
+                    # Look for multi/handler jobs (these are typically the listener jobs)
+                    for job_id, job_info in jobs.items():
+                        if isinstance(job_info, dict):
+                            job_name = job_info.get('name', '').lower()
+                            # Check if it's a handler job
+                            if 'exploit/multi/handler' in job_name or 'handler' in job_name:
+                                logger.info(f"Found potential handler job {job_id}: {job_name}")
+                                # Note: We can't easily determine which handler is for which session
+                                # So we log it but don't automatically kill it unless we're sure
+                                # The user can manually kill all handlers with stop_job or list_listeners
+                
+                if jobs_killed > 0:
+                    logger.info(f"Killed {jobs_killed} associated job(s)")
+                elif associated_job_id is None:
+                    logger.debug(f"No specific job_id found for session {session_id}, job may have already stopped")
+                    
+            except Exception as job_cleanup_e:
+                logger.warning(f"Error during job cleanup for session {session_id}: {job_cleanup_e}")
+                result_messages.append(f"Warning: Could not clean up associated jobs: {job_cleanup_e}")
+        
+        if session_terminated:
+            return {
+                "status": "success", 
+                "message": ". ".join(result_messages) + ".",
+                "session_id": session_id,
+                "jobs_killed": jobs_killed
+            }
+        else:
+            return {
+                "status": "warning", 
+                "message": ". ".join(result_messages) + ".",
+                "session_id": session_id,
+                "jobs_killed": jobs_killed
+            }
             
     except MsfRpcError as e:
         logger.error(f"MsfRpcError terminating session {session_id}: {e}")
@@ -2039,6 +2248,36 @@ async def health_check() -> Dict[str, Any]:
         return {"status": "error", "message": f"Internal Server Error during health check: {e}"}
 
 # --- Server Startup Logic ---
+
+def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
+    """
+    Check if a port is available to bind to.
+    
+    Args:
+        port: Port number to check
+        host: Host/interface to check (default: 0.0.0.0 for all interfaces)
+        
+    Returns:
+        Tuple of (is_available, error_message). If available, error_message is empty.
+    """
+    if not (1 <= port <= 65535):
+        return False, f"Invalid port {port}. Must be between 1 and 65535."
+    
+    try:
+        # Try to bind to the port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            logger.debug(f"Port {port} on {host} is available.")
+            return True, ""
+    except socket.error as e:
+        error_msg = f"Port {port} is already in use on {host}. Please choose a different port or stop the service using this port."
+        logger.warning(error_msg)
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Error checking port {port} availability: {e}"
+        logger.error(error_msg)
+        return False, error_msg
 
 def find_available_port(start_port, host='127.0.0.1', max_attempts=10):
     """Finds an available TCP port."""

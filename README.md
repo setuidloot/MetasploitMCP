@@ -246,6 +246,39 @@ The project maintains high test coverage with 92+ tests covering:
 
 Coverage reports are generated in `htmlcov/index.html`.
 
+### Metasploitable 3 Integration Testing
+
+Test MetasploitMCP against real vulnerable targets using the included test harness:
+
+```bash
+# List available exploit tests
+poetry run python metasploitable3_test_harness.py --list-tests
+
+# Run all tests against Metasploitable 3
+poetry run python metasploitable3_test_harness.py \
+    --target 10.0.2.15 \
+    --lhost 10.0.2.4 \
+    --lport 4444
+
+# Run specific test
+poetry run python metasploitable3_test_harness.py \
+    --target 10.0.2.15 \
+    --lhost 10.0.2.4 \
+    --test "ProFTPD ModCopy Exec"
+```
+
+The harness includes tests for:
+- ProFTPD ModCopy Exec
+- Apache Shellshock
+- Drupal Drupageddon
+- phpMyAdmin RCE
+- Ruby on Rails ActionPack
+- UnrealIRCd Backdoor
+
+For detailed documentation, see:
+- [Quick Start Guide](docs/QUICK_START_TESTING.md)
+- [Full Testing Documentation](docs/METASPLOITABLE3_TESTING.md)
+
 ## 📖 Documentation
 
 - **[API Reference](docs/API.md)**: Complete tool documentation with examples

