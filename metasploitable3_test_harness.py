@@ -44,6 +44,7 @@ class ExploitTest:
     options: Dict[str, Any]
     expected_user: Optional[str] = None
     notes: Optional[str] = None
+    run_as_job: bool = False  # If True, run exploit as background job
 
 
 @dataclass
@@ -523,11 +524,12 @@ class Metasploitable3TestHarness:
         
         try:
             # Run the exploit
-            logger.info("Executing exploit...")
+            logger.info(f"Executing exploit (run_as_job={test.run_as_job})...")
             result = await self.mcp_client.run_exploit(
                 module_name=test.module,
                 options=test.options,
-                payload_name=test.payload
+                payload_name=test.payload,
+                run_as_job=test.run_as_job
             )
             
             logger.info(f"Exploit execution result: {result}")
@@ -562,6 +564,9 @@ class Metasploitable3TestHarness:
                     elif "session_id" in result_json:
                         session_id = int(result_json["session_id"])
                         logger.info(f"Detected session ID from JSON: {session_id}")
+                    elif "session_id_detected" in result_json and result_json["session_id_detected"]:
+                        session_id = int(result_json["session_id_detected"])
+                        logger.info(f"Detected session ID from session_id_detected field: {session_id}")
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 logger.debug(f"Could not parse result as JSON: {e}")
                 # Fall back to regex parsing for text output
@@ -570,6 +575,44 @@ class Metasploitable3TestHarness:
                     if session_match:
                         session_id = int(session_match.group(1))
                         logger.info(f"Detected session ID from regex: {session_id}")
+            
+            # If no session was detected, check active sessions for matching exploit/payload
+            if not session_id:
+                logger.info("No session detected in exploit output, checking active sessions...")
+                try:
+                    # Parse sessions_result
+                    sessions = None
+                    if isinstance(sessions_result, dict):
+                        if "sessions" in sessions_result:
+                            sessions = sessions_result.get("sessions", {})
+                        elif "data" in sessions_result:
+                            data = sessions_result.get("data")
+                            if isinstance(data, str):
+                                try:
+                                    parsed_data = json.loads(data)
+                                    if isinstance(parsed_data, dict) and "sessions" in parsed_data:
+                                        sessions = parsed_data.get("sessions", {})
+                                except json.JSONDecodeError:
+                                    pass
+                            elif isinstance(data, dict) and "sessions" in data:
+                                sessions = data.get("sessions", {})
+                    
+                    if sessions:
+                        # Look for a session matching this test's exploit/payload
+                        for sid, sinfo in sessions.items():
+                            if isinstance(sinfo, dict):
+                                via_exploit = sinfo.get("via_exploit", "").lower()
+                                via_payload = sinfo.get("via_payload", "").lower()
+                                test_module_lower = test.module.lower().replace("exploit/", "")
+                                test_payload_lower = test.payload.lower().replace("payload/", "")
+                                
+                                # Match if the session was created by this test's exploit and payload
+                                if test_module_lower in via_exploit and test_payload_lower in via_payload:
+                                    session_id = int(sid)
+                                    logger.info(f"✓ Found matching active session {session_id} created by {via_exploit} with {via_payload}")
+                                    break
+                except Exception as e:
+                    logger.warning(f"Error checking active sessions: {e}")
             
             # Verify session
             if session_id:
