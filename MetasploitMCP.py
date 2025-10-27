@@ -483,9 +483,21 @@ async def _get_module_object(module_type: str, module_name: str) -> Any:
              logger.error(f"MsfRpcError getting module {module_type}/{base_module_name}: {e}")
              raise MsfRpcError(f"Error retrieving module '{module_name}': {e}") from e
 
-async def _set_module_options(module_obj: Any, options: Dict[str, Any]):
-    """Sets options on a module object, performing basic type guessing."""
-    logger.debug(f"Setting options for module {getattr(module_obj, 'fullname', '')}: {options}")
+async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_type: str = "module"):
+    """Sets options on a module object, performing basic type guessing and intelligent error detection."""
+    module_fullname = getattr(module_obj, 'fullname', 'unknown')
+    logger.debug(f"Setting options for module {module_fullname}: {options}")
+    
+    # Common payload options that shouldn't be set on exploit modules
+    PAYLOAD_ONLY_OPTIONS = {'LHOST', 'LPORT', 'EXITFUNC', 'PrependMigrate', 'PrependSetuid', 
+                            'PrependSetreuid', 'PrependSetresuid', 'ReverseListenerBindAddress',
+                            'ReverseListenerBindPort', 'ReverseListenerComm', 'AutoRunScript',
+                            'InitialAutoRunScript', 'AutoSystemInfo', 'EnableStageEncoding',
+                            'StageEncoder', 'StageEncoderSaveRegisters', 'StageEncodingFallback'}
+    
+    failed_options = []
+    payload_options_in_module = []
+    
     for k, v in options.items():
         # Basic type guessing
         original_value = v
@@ -506,8 +518,44 @@ async def _set_module_options(module_obj: Any, options: Dict[str, Any]):
             # logger.debug(f"Set option {k}={v} (original: {original_value})")
         except (MsfRpcError, KeyError, TypeError) as e:
              # Catch potential errors if option doesn't exist or type is wrong
-             logger.error(f"Failed to set option {k}={v} on module: {e}")
-             raise ValueError(f"Failed to set option '{k}' to '{original_value}': {e}") from e
+             error_str = str(e)
+             logger.error(f"Failed to set option {k}={v} on module {module_fullname}: {e}")
+             
+             # Check if this is a payload option being set on an exploit module
+             if k in PAYLOAD_ONLY_OPTIONS and 'invalid option' in error_str.lower():
+                 payload_options_in_module.append(k)
+                 failed_options.append((k, original_value, error_str))
+             else:
+                 failed_options.append((k, original_value, error_str))
+    
+    # If we detected payload options in module options, provide helpful error
+    if payload_options_in_module:
+        option_list = ', '.join(payload_options_in_module)
+        error_msg = (
+            f"❌ CONFIGURATION ERROR: Payload options ({option_list}) cannot be set on the exploit module.\n\n"
+            f"These options belong to the PAYLOAD, not the exploit module '{module_fullname}'.\n\n"
+            f"🔧 How to fix:\n"
+            f"1. Move {option_list} from 'options' to 'payload_options'\n"
+            f"2. Keep module-specific options (RHOSTS, RPORT, etc.) in 'options'\n\n"
+            f"Example:\n"
+            f"  ✗ WRONG:\n"
+            f"    run_exploit(\n"
+            f"        module_name='{module_fullname}',\n"
+            f"        options={{'RHOSTS': '...', 'LHOST': '...', 'LPORT': ...}},  # ❌ LHOST/LPORT here\n"
+            f"        payload_name='...')\n\n"
+            f"  ✓ CORRECT:\n"
+            f"    run_exploit(\n"
+            f"        module_name='{module_fullname}',\n"
+            f"        options={{'RHOSTS': '...', 'RPORT': ...}},  # ✅ Module options only\n"
+            f"        payload_name='...',\n"
+            f"        payload_options={{'LHOST': '...', 'LPORT': ...}})  # ✅ Payload options separate\n"
+        )
+        raise ValueError(error_msg)
+    
+    # If we have other failed options, raise a generic error
+    if failed_options:
+        failed_list = [f"{k}='{v}'" for k, v, _ in failed_options[:3]]  # Show first 3
+        raise ValueError(f"Failed to set option(s) on module '{module_fullname}': {', '.join(failed_list)}. {failed_options[0][2]}")
 
 async def _execute_module_rpc(
     module_type: str,
@@ -523,7 +571,7 @@ async def _execute_module_rpc(
     module_obj = await _get_module_object(module_type, module_name) # Handles path variants
     full_module_path = getattr(module_obj, 'fullname', f"{module_type}/{module_name}") # Get canonical name
 
-    await _set_module_options(module_obj, module_options)
+    await _set_module_options(module_obj, module_options, module_type=module_type)
 
     payload_obj_to_pass = None
     payload_name_for_log = None
@@ -543,7 +591,7 @@ async def _execute_module_rpc(
              payload_options_for_log = payload_options
              try:
                  payload_obj = await _get_module_object('payload', payload_name)
-                 await _set_module_options(payload_obj, payload_options)
+                 await _set_module_options(payload_obj, payload_options, module_type='payload')
                  payload_obj_to_pass = payload_obj # Pass the configured payload object
                  logger.info(f"Executing {full_module_path} with configured payload object for '{payload_name}'.")
              except (ValueError, MsfRpcError) as e:
@@ -1121,7 +1169,7 @@ async def generate_payload(
         payload = await _get_module_object('payload', payload_type)
 
         # Set payload-specific required options (like LHOST/LPORT)
-        await _set_module_options(payload, parsed_options)
+        await _set_module_options(payload, parsed_options, module_type='payload')
 
         # Set payload generation options in payload.runoptions
         # as per the pymetasploit3 documentation
