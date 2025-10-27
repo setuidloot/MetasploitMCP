@@ -38,7 +38,7 @@ PAYLOAD_SAVE_DIR = os.environ.get('PAYLOAD_SAVE_DIR', str(pathlib.Path.home() / 
 DEFAULT_CONSOLE_READ_TIMEOUT = 15  # Default for quick console commands
 LONG_CONSOLE_READ_TIMEOUT = 60   # For commands like run/exploit/check
 SESSION_COMMAND_TIMEOUT = 15     # Default for commands within sessions
-SESSION_READ_INACTIVITY_TIMEOUT = 6 # Timeout if no data from session
+SESSION_READ_INACTIVITY_TIMEOUT = 15 # Timeout if no data from session
 EXPLOIT_SESSION_POLL_TIMEOUT = 120 # Max time to wait for session after exploit job
 EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
@@ -774,8 +774,16 @@ async def _execute_module_console(
             module_output = await run_command_safely(console, command, execution_timeout=timeout)
             execution_duration = asyncio.get_event_loop().time() - start_execution_time
             
-            logger.info(f"Module execution completed in {execution_duration:.1f}s. "
-                       f"Output length: {len(module_output)} characters")
+            # Check if the command timed out
+            timed_out = module_output.startswith("TIMEOUT_ERROR:")
+            if timed_out:
+                # Remove the TIMEOUT_ERROR: prefix for cleaner output
+                module_output = module_output.replace("TIMEOUT_ERROR:", "").strip()
+                logger.warning(f"Module {full_module_path} timed out after {execution_duration:.1f}s")
+            else:
+                logger.info(f"Module execution completed in {execution_duration:.1f}s. "
+                           f"Output length: {len(module_output)} characters")
+            
             logger.debug(f"Module output preview: {module_output[:200]}{'...' if len(module_output) > 200 else ''}")
 
             # --- Parse Console Output ---
@@ -793,15 +801,28 @@ async def _execute_module_console(
 
             status = "success"
             message = f"{module_type.capitalize()} module {full_module_path} completed via console ({command})."
-            if command in ['exploit', 'run'] and session_id is None and \
+            
+            # Handle timeout case
+            if timed_out:
+                if command in ['exploit', 'run']:
+                    status = "warning"
+                    message = f"{module_type.capitalize()} module {full_module_path} timed out after {timeout}s. "
+                    if session_id is None:
+                        message += "Session may have been created after timeout. Check list_active_sessions() to verify."
+                    else:
+                        message += f"Session {session_id} was detected in partial output."
+                else:
+                    status = "error"
+                    message = f"{module_type.capitalize()} module {full_module_path} timed out after {timeout}s."
+            elif command in ['exploit', 'run'] and session_id is None and \
                any(term in module_output.lower() for term in ['session opened', 'sending stage']):
-                 message += " Session may have opened but ID detection failed or session closed quickly."
+                 message += " Session may have opened but ID detection failed or session closed quickly. Check list_active_sessions() to verify."
                  status = "warning"
             elif command in ['exploit', 'run'] and session_id is not None:
                  message += f" Session {session_id} detected."
 
-            # Check for common failure indicators
-            if any(fail in module_output.lower() for fail in ['exploit completed, but no session was created', 'exploit failed', 'run failed', 'check failed', 'module check failed']):
+            # Check for common failure indicators (but not if we timed out)
+            if not timed_out and any(fail in module_output.lower() for fail in ['exploit completed, but no session was created', 'exploit failed', 'run failed', 'check failed', 'module check failed']):
                  status = "error" if status != "warning" else status # Don't override warning if session might have opened
                  message = f"{module_type.capitalize()} module {full_module_path} execution via console appears to have failed. Check output."
                  logger.error(f"Failure detected in console output for {full_module_path}.")
@@ -826,7 +847,9 @@ async def _execute_module_console(
                  "module": full_module_path,
                  "options": module_options,
                  "payload_name": payload_name_for_log,
-                 "payload_options": payload_options_for_log
+                 "payload_options": payload_options_for_log,
+                 "timed_out": timed_out,
+                 "execution_duration": execution_duration
             }
 
         except (RuntimeError, MsfRpcError, ValueError) as e: # Catch errors from run_command_safely or setup
