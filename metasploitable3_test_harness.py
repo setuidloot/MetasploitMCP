@@ -244,7 +244,8 @@ class Metasploitable3TestHarness:
         lhost: str,
         lport: int = 4444,
         mcp_url: str = "http://127.0.0.1:8085",
-        use_gateway: bool = False
+        use_gateway: bool = False,
+        run_as_job_override: Optional[bool] = None
     ):
         """Initialize test harness.
         
@@ -254,12 +255,14 @@ class Metasploitable3TestHarness:
             lport: Local port for reverse connections (default: 4444)
             mcp_url: MetasploitMCP server URL or ExploitMCP gateway URL
             use_gateway: If True, connect to ExploitMCP gateway (default: False)
+            run_as_job_override: If set, override all tests' run_as_job setting (default: None = use test's setting)
         """
         self.target_ip = target_ip
         self.lhost = lhost
         self.lport = lport
         self.mcp_client = MetasploitMCPClient(mcp_url, use_gateway=use_gateway)
         self.results: List[TestResult] = []
+        self.run_as_job_override = run_as_job_override
         
         server_type = "ExploitMCP Gateway" if use_gateway else "MetasploitMCP Server"
         logger.info(f"Initialized test harness:")
@@ -268,6 +271,8 @@ class Metasploitable3TestHarness:
         logger.info(f"  LPORT: {lport}")
         logger.info(f"  Server Type: {server_type}")
         logger.info(f"  Server URL: {mcp_url}")
+        if run_as_job_override is not None:
+            logger.info(f"  Run as Job Override: {run_as_job_override}")
     
     async def cleanup_all_sessions(self, kill_handler_jobs: bool = True) -> int:
         """Kill all active Metasploit sessions to free up ports.
@@ -527,13 +532,16 @@ class Metasploitable3TestHarness:
         start_time = datetime.now()
         
         try:
+            # Determine run_as_job setting (CLI override takes precedence)
+            run_as_job = self.run_as_job_override if self.run_as_job_override is not None else test.run_as_job
+            
             # Run the exploit
-            logger.info(f"Executing exploit (run_as_job={test.run_as_job})...")
+            logger.info(f"Executing exploit (run_as_job={run_as_job})...")
             result = await self.mcp_client.run_exploit(
                 module_name=test.module,
                 options=test.options,
                 payload_name=test.payload,
-                run_as_job=test.run_as_job
+                run_as_job=run_as_job
             )
             
             logger.info(f"Exploit execution result: {result}")
@@ -755,8 +763,11 @@ async def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
+  # Basic usage (console mode)
   python metasploitable3_test_harness.py --target 10.0.2.15 --lhost 10.0.2.4
+  
+  # Run exploits as background jobs
+  python metasploitable3_test_harness.py --target 10.0.2.15 --lhost 10.0.2.4 --run-as-job
   
   # Custom port
   python metasploitable3_test_harness.py --target 192.168.1.100 --lhost 192.168.1.10 --lport 4444
@@ -764,8 +775,11 @@ Examples:
   # Custom MCP server
   python metasploitable3_test_harness.py --target 10.0.2.15 --lhost 10.0.2.4 --mcp-url http://localhost:9000
   
-  # Run single test
-  python metasploitable3_test_harness.py --target 10.0.2.15 --lhost 10.0.2.4 --test "ProFTPD ModCopy Exec"
+  # Run single test in job mode
+  python metasploitable3_test_harness.py --target 10.0.2.15 --lhost 10.0.2.4 --test "ProFTPD" --run-as-job
+  
+  # Connect to ExploitMCP gateway in job mode
+  python metasploitable3_test_harness.py --target 10.0.2.15 --lhost 10.0.2.4 --gateway --run-as-job
         """
     )
     
@@ -819,6 +833,11 @@ Examples:
         action="store_true",
         help="Skip cleanup of existing sessions before running tests (default: cleanup enabled)"
     )
+    parser.add_argument(
+        "--run-as-job",
+        action="store_true",
+        help="Run exploits as background jobs instead of console mode (tests both execution paths)"
+    )
     
     args = parser.parse_args()
     
@@ -831,7 +850,8 @@ Examples:
         lhost=args.lhost,
         lport=args.lport,
         mcp_url=args.mcp_url,
-        use_gateway=args.gateway
+        use_gateway=args.gateway,
+        run_as_job_override=True if args.run_as_job else None
     )
     
     # List tests if requested
