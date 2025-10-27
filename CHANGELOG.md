@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Intelligent Payload/Module Option Detection**: Automatically detects when payload options are incorrectly provided as module options
+  - Recognizes 16 common payload-only options (LHOST, LPORT, EXITFUNC, PrependMigrate, etc.)
+  - Provides clear, actionable error messages explaining the mistake
+  - Shows side-by-side WRONG vs CORRECT code examples
+  - Helps AI agents and humans quickly fix configuration errors
+  - Zero performance overhead (only activates on actual errors)
+  - Documented in `docs/INTELLIGENT_ERROR_DETECTION.md`
 - **Job Cleanup on Session Termination**: `terminate_session()` now automatically kills associated handler jobs to release ports
   - New `kill_associated_job` parameter (default: True) controls whether to kill handler job
   - Searches for job_id in session info and terminates it
