@@ -160,25 +160,31 @@ class MetasploitMCPClient:
         module_name: str,
         options: Dict[str, Any],
         payload_name: str,
+        payload_options: Optional[Dict[str, Any]] = None,
         run_as_job: bool = False
     ) -> Dict[str, Any]:
         """Run an exploit module.
         
         Args:
             module_name: Metasploit module path (e.g., "exploit/unix/ftp/proftpd_modcopy_exec")
-            options: Module options (RHOSTS, RPORT, etc.)
+            options: Module options (RHOSTS, RPORT, etc. - NOT including LHOST/LPORT)
             payload_name: Payload to use (e.g., "cmd/unix/reverse_perl")
+            payload_options: Payload options (LHOST, LPORT, etc.)
             run_as_job: If True, run as background job; if False, run via console (default: False)
             
         Returns:
             Exploit execution result
         """
-        return await self.call_tool("run_exploit", {
+        tool_args = {
             "module_name": module_name,
             "options": options,
             "payload_name": payload_name,
             "run_as_job": run_as_job
-        })
+        }
+        if payload_options:
+            tool_args["payload_options"] = payload_options
+        
+        return await self.call_tool("run_exploit", tool_args)
     
     async def list_sessions(self) -> Dict[str, Any]:
         """List active sessions."""
@@ -535,12 +541,19 @@ class Metasploitable3TestHarness:
             # Determine run_as_job setting (CLI override takes precedence)
             run_as_job = self.run_as_job_override if self.run_as_job_override is not None else test.run_as_job
             
+            # Separate payload options (LHOST/LPORT) from module options
+            module_options = {k: v for k, v in test.options.items() if k not in ['LHOST', 'LPORT']}
+            payload_options = {k: v for k, v in test.options.items() if k in ['LHOST', 'LPORT']}
+            
             # Run the exploit
             logger.info(f"Executing exploit (run_as_job={run_as_job})...")
+            logger.debug(f"Module options: {module_options}")
+            logger.debug(f"Payload options: {payload_options}")
             result = await self.mcp_client.run_exploit(
                 module_name=test.module,
-                options=test.options,
+                options=module_options,
                 payload_name=test.payload,
+                payload_options=payload_options,
                 run_as_job=run_as_job
             )
             
