@@ -159,7 +159,8 @@ class MetasploitMCPClient:
         self,
         module_name: str,
         options: Dict[str, Any],
-        payload_name: str
+        payload_name: str,
+        run_as_job: bool = False
     ) -> Dict[str, Any]:
         """Run an exploit module.
         
@@ -167,6 +168,7 @@ class MetasploitMCPClient:
             module_name: Metasploit module path (e.g., "exploit/unix/ftp/proftpd_modcopy_exec")
             options: Module options (RHOSTS, RPORT, etc.)
             payload_name: Payload to use (e.g., "cmd/unix/reverse_perl")
+            run_as_job: If True, run as background job; if False, run via console (default: False)
             
         Returns:
             Exploit execution result
@@ -174,7 +176,8 @@ class MetasploitMCPClient:
         return await self.call_tool("run_exploit", {
             "module_name": module_name,
             "options": options,
-            "payload_name": payload_name
+            "payload_name": payload_name,
+            "run_as_job": run_as_job
         })
     
     async def list_sessions(self) -> Dict[str, Any]:
