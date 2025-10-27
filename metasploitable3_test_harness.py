@@ -424,7 +424,8 @@ class Metasploitable3TestHarness:
                     "LPORT": str(self.lport)
                 },
                 expected_user="www-data",
-                notes="FTP service exploit via mod_copy vulnerability"
+                notes="FTP service exploit via mod_copy vulnerability",
+                run_as_job=False  # Console mode (default) - change to True to test job mode
             ),
             ExploitTest(
                 name="Apache Shellshock",
