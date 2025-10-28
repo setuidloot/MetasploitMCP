@@ -13,21 +13,25 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 def pytest_configure(config):
     """Configure pytest with custom settings."""
-    # Mock external dependencies that might not be available
-    mock_modules = [
-        'uvicorn',
-        'fastapi', 
-        'mcp.server.fastmcp',
-        'mcp.server.sse',
-        'pymetasploit3.msfrpc',
-        'starlette.applications',
-        'starlette.routing',
-        'mcp.server.session'
-    ]
+    # Mock external dependencies that might not be available during testing
+    # We only mock pymetasploit3 since other dependencies (fastmcp, uvicorn, etc.) 
+    # are now proper installed dependencies
     
-    for module in mock_modules:
-        if module not in sys.modules:
-            sys.modules[module] = Mock()
+    # Create proper exception class for MsfRpcError
+    class MockMsfRpcError(Exception):
+        """Mock MSF RPC error that properly inherits from Exception."""
+        pass
+    
+    # Create mock module with proper exception class
+    mock_msfrpc = Mock()
+    mock_msfrpc.MsfRpcError = MockMsfRpcError
+    mock_msfrpc.MsfRpcClient = Mock
+    mock_msfrpc.MsfConsole = Mock
+    
+    if 'pymetasploit3.msfrpc' not in sys.modules:
+        sys.modules['pymetasploit3.msfrpc'] = mock_msfrpc
+    if 'pymetasploit3' not in sys.modules:
+        sys.modules['pymetasploit3'] = Mock(msfrpc=mock_msfrpc)
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers automatically."""
@@ -153,5 +157,9 @@ def pytest_runtest_setup(item):
 @pytest.fixture(autouse=True)
 def reset_msf_client():
     """Automatically reset the global MSF client between tests."""
-    with patch('MetasploitMCP._msf_client_instance', None):
+    # Only patch if MetasploitMCP is already imported
+    if 'MetasploitMCP' in sys.modules:
+        with patch.object(sys.modules['MetasploitMCP'], '_msf_client_instance', None):
+            yield
+    else:
         yield

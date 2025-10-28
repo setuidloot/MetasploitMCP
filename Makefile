@@ -90,6 +90,35 @@ test-debug: ## Testing: Run tests with detailed output for debugging
 	@echo "$(BLUE)Running tests in debug mode...$(RESET)"
 	poetry run pytest tests/ -v --tb=long --capture=no
 
+test-harness: ## Testing: Run Metasploitable 3 test harness unit tests
+	@echo "$(BLUE)Running Metasploitable 3 harness tests...$(RESET)"
+	poetry run pytest tests/test_metasploitable3_harness.py -v
+
+test-metasploitable3: ## Testing: Run integration tests against Metasploitable 3 (requires TARGET, LHOST)
+	@echo "$(BLUE)Running Metasploitable 3 integration tests...$(RESET)"
+	@if [ -z "$(TARGET)" ] || [ -z "$(LHOST)" ]; then \
+		echo "$(RED)Error: TARGET and LHOST must be set$(RESET)"; \
+		echo "Usage: make test-metasploitable3 TARGET=10.0.2.15 LHOST=10.0.2.4 [LPORT=4444]"; \
+		exit 1; \
+	fi
+	poetry run python metasploitable3_test_harness.py \
+		--target $(TARGET) \
+		--lhost $(LHOST) \
+		--lport $(if $(LPORT),$(LPORT),4444)
+
+test-metasploitable3-quick: ## Testing: Quick test against Metasploitable 3 (requires TARGET, LHOST)
+	@echo "$(BLUE)Running quick Metasploitable 3 test...$(RESET)"
+	@if [ -z "$(TARGET)" ] || [ -z "$(LHOST)" ]; then \
+		echo "$(RED)Error: TARGET and LHOST must be set$(RESET)"; \
+		echo "Usage: make test-metasploitable3-quick TARGET=10.0.2.15 LHOST=10.0.2.4"; \
+		exit 1; \
+	fi
+	bash examples/metasploitable3_quicktest.sh $(TARGET) $(LHOST) $(if $(LPORT),$(LPORT),4444)
+
+list-metasploitable3-tests: ## Testing: List available Metasploitable 3 tests
+	@echo "$(BLUE)Available Metasploitable 3 exploit tests:$(RESET)"
+	poetry run python metasploitable3_test_harness.py --list-tests
+
 # Quality targets
 lint: ## Quality: Run all linting checks
 	@echo "$(BLUE)Running flake8...$(RESET)"
