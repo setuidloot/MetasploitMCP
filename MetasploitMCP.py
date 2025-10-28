@@ -483,17 +483,40 @@ async def _get_module_object(module_type: str, module_name: str) -> Any:
              logger.error(f"MsfRpcError getting module {module_type}/{base_module_name}: {e}")
              raise MsfRpcError(f"Error retrieving module '{module_name}': {e}") from e
 
-async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_type: str = "module"):
-    """Sets options on a module object, performing basic type guessing and intelligent error detection."""
+async def _get_module_valid_options(module_obj: Any) -> set:
+    """Get the set of valid option names for a module by querying Metasploit."""
+    try:
+        # module_obj.options returns a dict of option_name -> option_info
+        options_dict = await asyncio.to_thread(lambda: module_obj.options)
+        if isinstance(options_dict, dict):
+            return set(options_dict.keys())
+        return set()
+    except Exception as e:
+        logger.warning(f"Failed to get valid options for module: {e}")
+        return set()
+
+async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_type: str = "module", payload_obj: Any = None):
+    """Sets options on a module object, performing basic type guessing and intelligent error detection.
+    
+    Args:
+        module_obj: The Metasploit module object
+        options: Options to set on the module
+        module_type: Type of module ('exploit', 'payload', 'auxiliary', etc.)
+        payload_obj: Optional payload object to check if failed options are valid payload options
+    """
     module_fullname = getattr(module_obj, 'fullname', 'unknown')
     logger.debug(f"Setting options for module {module_fullname}: {options}")
     
-    # Common payload options that shouldn't be set on exploit modules
-    PAYLOAD_ONLY_OPTIONS = {'LHOST', 'LPORT', 'EXITFUNC', 'PrependMigrate', 'PrependSetuid', 
-                            'PrependSetreuid', 'PrependSetresuid', 'ReverseListenerBindAddress',
-                            'ReverseListenerBindPort', 'ReverseListenerComm', 'AutoRunScript',
-                            'InitialAutoRunScript', 'AutoSystemInfo', 'EnableStageEncoding',
-                            'StageEncoder', 'StageEncoderSaveRegisters', 'StageEncodingFallback'}
+    # Get valid options for this module
+    valid_module_options = await _get_module_valid_options(module_obj)
+    logger.debug(f"Module {module_fullname} has {len(valid_module_options)} valid options: {sorted(valid_module_options)}")
+    
+    # Get valid payload options if we have a payload
+    valid_payload_options = set()
+    if payload_obj:
+        valid_payload_options = await _get_module_valid_options(payload_obj)
+        payload_name = getattr(payload_obj, 'fullname', 'unknown')
+        logger.debug(f"Payload {payload_name} has {len(valid_payload_options)} valid options: {sorted(valid_payload_options)}")
     
     failed_options = []
     payload_options_in_module = []
@@ -521,8 +544,9 @@ async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_t
              error_str = str(e)
              logger.error(f"Failed to set option {k}={v} on module {module_fullname}: {e}")
              
-             # Check if this is a payload option being set on an exploit module
-             if k in PAYLOAD_ONLY_OPTIONS and 'invalid option' in error_str.lower():
+             # Check if this option is valid for the payload (intelligent detection)
+             if 'invalid option' in error_str.lower() and k in valid_payload_options:
+                 logger.debug(f"Option {k} is valid for payload but not for module {module_fullname}")
                  payload_options_in_module.append(k)
                  failed_options.append((k, original_value, error_str))
              else:
@@ -531,31 +555,41 @@ async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_t
     # If we detected payload options in module options, provide helpful error
     if payload_options_in_module:
         option_list = ', '.join(payload_options_in_module)
+        payload_name = getattr(payload_obj, 'fullname', 'payload') if payload_obj else 'payload'
         error_msg = (
             f"❌ CONFIGURATION ERROR: Payload options ({option_list}) cannot be set on the exploit module.\n\n"
-            f"These options belong to the PAYLOAD, not the exploit module '{module_fullname}'.\n\n"
+            f"These options belong to the PAYLOAD ('{payload_name}'), not the exploit module '{module_fullname}'.\n\n"
             f"🔧 How to fix:\n"
             f"1. Move {option_list} from 'options' to 'payload_options'\n"
-            f"2. Keep module-specific options (RHOSTS, RPORT, etc.) in 'options'\n\n"
+            f"2. Keep module-specific options (e.g., {', '.join(list(valid_module_options)[:3])}) in 'options'\n\n"
             f"Example:\n"
             f"  ✗ WRONG:\n"
             f"    run_exploit(\n"
             f"        module_name='{module_fullname}',\n"
-            f"        options={{'RHOSTS': '...', 'LHOST': '...', 'LPORT': ...}},  # ❌ LHOST/LPORT here\n"
-            f"        payload_name='...')\n\n"
+            f"        options={{'RHOSTS': '...', '{payload_options_in_module[0]}': '...', ...}},  # ❌ {payload_options_in_module[0]} here\n"
+            f"        payload_name='{payload_name}')\n\n"
             f"  ✓ CORRECT:\n"
             f"    run_exploit(\n"
             f"        module_name='{module_fullname}',\n"
-            f"        options={{'RHOSTS': '...', 'RPORT': ...}},  # ✅ Module options only\n"
-            f"        payload_name='...',\n"
-            f"        payload_options={{'LHOST': '...', 'LPORT': ...}})  # ✅ Payload options separate\n"
+            f"        options={{'RHOSTS': '...', ...}},  # ✅ Module options only\n"
+            f"        payload_name='{payload_name}',\n"
+            f"        payload_options={{'{payload_options_in_module[0]}': '...', ...}})  # ✅ Payload options separate\n"
         )
         raise ValueError(error_msg)
     
-    # If we have other failed options, raise a generic error
+    # If we have other failed options, raise an informative error
     if failed_options:
         failed_list = [f"{k}='{v}'" for k, v, _ in failed_options[:3]]  # Show first 3
-        raise ValueError(f"Failed to set option(s) on module '{module_fullname}': {', '.join(failed_list)}. {failed_options[0][2]}")
+        error_msg = f"Failed to set option(s) on module '{module_fullname}': {', '.join(failed_list)}. {failed_options[0][2]}"
+        
+        # Add helpful hint about valid options if we have them
+        if valid_module_options:
+            valid_options_sample = ', '.join(sorted(valid_module_options)[:10])
+            if len(valid_module_options) > 10:
+                valid_options_sample += f", ... ({len(valid_module_options)} total)"
+            error_msg += f"\n\nValid options for this module: {valid_options_sample}"
+        
+        raise ValueError(error_msg)
 
 async def _execute_module_rpc(
     module_type: str,
@@ -571,19 +605,23 @@ async def _execute_module_rpc(
     module_obj = await _get_module_object(module_type, module_name) # Handles path variants
     full_module_path = getattr(module_obj, 'fullname', f"{module_type}/{module_name}") # Get canonical name
 
-    await _set_module_options(module_obj, module_options, module_type=module_type)
-
+    # Prepare payload first if needed, so we can pass it to _set_module_options for intelligent error detection
     payload_obj_to_pass = None
+    payload_obj_for_validation = None
     payload_name_for_log = None
     payload_options_for_log = None
 
-    # Prepare payload if needed (primarily for exploits, also used by start_listener)
     if module_type == 'exploit' and payload_spec:
         if isinstance(payload_spec, str):
              payload_name_for_log = payload_spec
              # Passing name string directly is supported by exploit.execute
              payload_obj_to_pass = payload_name_for_log
              logger.info(f"Executing {full_module_path} with payload '{payload_name_for_log}' (passed as string).")
+             # Try to get payload object for validation (non-blocking if it fails)
+             try:
+                 payload_obj_for_validation = await _get_module_object('payload', payload_name_for_log)
+             except Exception as e:
+                 logger.debug(f"Could not get payload object for validation: {e}")
         elif isinstance(payload_spec, dict) and 'name' in payload_spec:
              payload_name = payload_spec['name']
              payload_options = payload_spec.get('options', {})
@@ -591,6 +629,7 @@ async def _execute_module_rpc(
              payload_options_for_log = payload_options
              try:
                  payload_obj = await _get_module_object('payload', payload_name)
+                 payload_obj_for_validation = payload_obj  # Use for validation
                  await _set_module_options(payload_obj, payload_options, module_type='payload')
                  payload_obj_to_pass = payload_obj # Pass the configured payload object
                  logger.info(f"Executing {full_module_path} with configured payload object for '{payload_name}'.")
@@ -600,6 +639,9 @@ async def _execute_module_rpc(
         else:
              logger.warning(f"Invalid payload_spec format: {payload_spec}. Expected string or dict with 'name'.")
              return {"status": "error", "message": "Invalid payload specification format."}
+
+    # Now set module options with payload object available for intelligent error detection
+    await _set_module_options(module_obj, module_options, module_type=module_type, payload_obj=payload_obj_for_validation)
 
     logger.info(f"Executing module {full_module_path} as background job via RPC...")
     try:
