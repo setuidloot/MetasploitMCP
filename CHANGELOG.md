@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Intelligent Payload/Module Option Detection**: Automatically detects when payload options are incorrectly provided as module options
-  - Recognizes 16 common payload-only options (LHOST, LPORT, EXITFUNC, PrependMigrate, etc.)
-  - Provides clear, actionable error messages explaining the mistake
-  - Shows side-by-side WRONG vs CORRECT code examples
+  - **Queries Metasploit directly** for valid module and payload options (100% accurate, always up-to-date)
+  - No hardcoded option lists to maintain - works with all current and future modules/payloads
+  - Payload-specific validation - checks against the exact payload being used
+  - Provides clear, actionable error messages with actual valid option names from Metasploit
+  - Shows side-by-side WRONG vs CORRECT code examples with specific option names
   - Helps AI agents and humans quickly fix configuration errors
-  - Zero performance overhead (only activates on actual errors)
+  - Zero performance overhead for correct configurations (only queries on errors)
   - Documented in `docs/INTELLIGENT_ERROR_DETECTION.md`
 - **Job Cleanup on Session Termination**: `terminate_session()` now automatically kills associated handler jobs to release ports
   - New `kill_associated_job` parameter (default: True) controls whether to kill handler job
