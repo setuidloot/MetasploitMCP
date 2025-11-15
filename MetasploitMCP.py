@@ -2332,12 +2332,12 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
         logger.exception(f"Unexpected error terminating session {session_id}")
         return {"status": "error", "message": f"Unexpected error terminating session {session_id}: {e}"}
 
-# --- Health Check Tool ---
-# Add health check as an MCP tool instead of a separate endpoint
+# --- Health Check ---
+# Add both MCP tool and HTTP endpoint for health checking
 
 @mcp.tool()
 async def health_check() -> Dict[str, Any]:
-    """Check connectivity to the Metasploit RPC service."""
+    """Check connectivity to the Metasploit RPC service (MCP tool version)."""
     try:
         client = get_msf_client() # Will raise ConnectionError if not init
         logger.debug(f"Executing health check MSF call (core.version) with {RPC_CALL_TIMEOUT}s timeout...")
@@ -2359,6 +2359,75 @@ async def health_check() -> Dict[str, Any]:
     except Exception as e:
         logger.exception("Unexpected error during health check.")
         return {"status": "error", "message": f"Internal Server Error during health check: {e}"}
+
+
+# HTTP Health Check Endpoint
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+@mcp.custom_route("/health", methods=["GET"])
+async def http_health_endpoint(request: Request) -> JSONResponse:
+    """HTTP health check endpoint for Docker and monitoring systems"""
+    try:
+        client = get_msf_client()
+        logger.debug("HTTP health check: Testing MSF RPC connection...")
+        
+        # Use a lightweight call like core.version
+        version_info = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.core.version),
+            timeout=RPC_CALL_TIMEOUT
+        )
+        
+        msf_version = version_info.get('version', 'N/A') if isinstance(version_info, dict) else 'N/A'
+        logger.debug(f"HTTP health check successful. MSF Version: {msf_version}")
+        
+        return JSONResponse({
+            "status": "healthy",
+            "service": "MetasploitMCP",
+            "msf_version": msf_version,
+            "msf_server": f"{MSF_SERVER}:{MSF_PORT_STR}",
+            "ssl": MSF_SSL_STR == 'true'
+        }, status_code=200)
+        
+    except asyncio.TimeoutError:
+        error_msg = f"Health check timeout ({RPC_CALL_TIMEOUT}s) - Metasploit server is not responding"
+        logger.error(error_msg)
+        return JSONResponse({
+            "status": "unhealthy",
+            "service": "MetasploitMCP",
+            "error": error_msg
+        }, status_code=503)
+        
+    except (MsfRpcError, ConnectionError) as e:
+        logger.error(f"HTTP health check failed - MSF RPC connection error: {e}")
+        return JSONResponse({
+            "status": "unhealthy",
+            "service": "MetasploitMCP",
+            "error": f"Metasploit Service Unavailable: {str(e)}"
+        }, status_code=503)
+        
+    except Exception as e:
+        logger.exception("Unexpected error during HTTP health check")
+        return JSONResponse({
+            "status": "unhealthy",
+            "service": "MetasploitMCP",
+            "error": f"Internal Server Error: {str(e)}"
+        }, status_code=500)
+
+
+@mcp.custom_route("/", methods=["GET"])
+async def http_root_endpoint(request: Request) -> JSONResponse:
+    """Root endpoint with service information"""
+    return JSONResponse({
+        "service": "MetasploitMCP",
+        "version": "2.0.0",
+        "description": "Metasploit Framework MCP Server",
+        "mcp_endpoint": "/mcp",
+        "health_endpoint": "/health",
+        "status": "running",
+        "msf_server": f"{MSF_SERVER}:{MSF_PORT_STR}"
+    })
+
 
 # --- Server Startup Logic ---
 
@@ -2541,7 +2610,9 @@ if __name__ == "__main__":
         mcp.settings.port = selected_port
         
         logger.info(f"Starting FastMCP HTTP server on http://{args.host}:{selected_port}")
-        logger.info(f"MCP HTTP Endpoint: /mcp")
+        logger.info(f"MCP Endpoint:    http://{args.host}:{selected_port}/mcp")
+        logger.info(f"Health Check:    http://{args.host}:{selected_port}/health")
+        logger.info(f"Service Info:    http://{args.host}:{selected_port}/")
         logger.info(f"Payload Save Directory: {PAYLOAD_SAVE_DIR}")
         
         try:
