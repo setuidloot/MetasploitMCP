@@ -51,6 +51,10 @@ SHELL_PROMPT_RE = re.compile(r'([#$>]|%)\s*$') # Matches common shell prompts (#
 
 _msf_client_instance: Optional[MsfRpcClient] = None
 
+# Multi-agent support
+_instance_manager: Optional['MetasploitInstanceManager'] = None
+_multi_agent_enabled = os.getenv('METASPLOIT_MULTI_AGENT', 'false').lower() in ('true', '1', 'yes', 'on')
+
 def initialize_msf_client() -> MsfRpcClient:
     """
     Initializes the global Metasploit RPC client instance.
@@ -90,6 +94,59 @@ def initialize_msf_client() -> MsfRpcClient:
     except Exception as e:
         logger.error(f"An unexpected error occurred during MSF client initialization: {e}", exc_info=True)
         raise RuntimeError(f"Unexpected error initializing MSF client: {e}") from e
+
+def initialize_instance_manager():
+    """Initialize the Metasploit Instance Manager for multi-agent support."""
+    global _instance_manager
+    
+    if _instance_manager is not None:
+        return _instance_manager
+    
+    if not _multi_agent_enabled:
+        logger.info("Multi-agent support disabled for Metasploit")
+        return None
+    
+    try:
+        from metasploit_instance_manager import MetasploitInstanceManager
+        
+        base_port = int(os.getenv('METASPLOIT_PORT_START', '55553'))
+        timeout = int(os.getenv('METASPLOIT_INSTANCE_TIMEOUT', '1800'))
+        
+        _instance_manager = MetasploitInstanceManager(
+            base_port=base_port,
+            password=MSF_PASSWORD,
+            inactivity_timeout=timeout
+        )
+        
+        logger.info(f"Metasploit Instance Manager initialized (base_port={base_port}, timeout={timeout}s)")
+        return _instance_manager
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize Metasploit Instance Manager: {e}", exc_info=True)
+        return None
+
+
+async def get_agent_msf_client(agent_id: str = "default-agent") -> MsfRpcClient:
+    """
+    Get Metasploit RPC client for a specific agent.
+    
+    If multi-agent mode is enabled, this will create an on-demand instance for the agent.
+    Otherwise, it returns the global shared client.
+    
+    Args:
+        agent_id: Agent identifier
+        
+    Returns:
+        MsfRpcClient for this agent
+    """
+    if _multi_agent_enabled and _instance_manager:
+        logger.debug(f"Getting per-agent Metasploit client for agent: {agent_id}")
+        return await _instance_manager.get_client(agent_id)
+    else:
+        # Fall back to shared client
+        logger.debug("Using shared Metasploit client (multi-agent disabled)")
+        return get_msf_client()
+
 
 def get_msf_client() -> MsfRpcClient:
     """Gets the initialized MSF client instance, raising an error if not ready."""
