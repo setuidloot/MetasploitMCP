@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # --- Third-party Libraries ---
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 from pymetasploit3.msfrpc import MsfConsole, MsfRpcClient, MsfRpcError
 
 # --- Configuration & Constants ---
@@ -512,12 +512,114 @@ def _parse_options_gracefully(options: Union[Dict[str, Any], str, None]) -> Dict
     except (TypeError, ValueError) as e:
         raise ValueError(f"Options must be a dictionary or comma-separated string format 'key=value,key2=value2'. Got {type(options)}: {options}")
 
+async def _get_compatible_payloads_console(exploit_module: str) -> List[str]:
+    """
+    Fallback method to get compatible payloads using console when RPC API fails.
+    Uses 'show payloads' command in msfconsole.
+    """
+    client = get_msf_client()
+    console_id = None
+    
+    try:
+        # Create a console
+        logger.debug(f"Creating console to get compatible payloads for {exploit_module}")
+        console = await asyncio.wait_for(
+            asyncio.to_thread(lambda: client.consoles.console()),
+            timeout=RPC_CALL_TIMEOUT
+        )
+        console_id = console.cid
+        logger.debug(f"Created console {console_id} for payload listing")
+        
+        # Determine full module path
+        if '/' in exploit_module and not exploit_module.startswith('exploit/'):
+            full_path = f"exploit/{exploit_module}"
+        else:
+            full_path = exploit_module if exploit_module.startswith('exploit/') else f"exploit/{exploit_module}"
+        
+        # Use the exploit module
+        logger.debug(f"Using exploit module: {full_path}")
+        await asyncio.to_thread(lambda: console.write(f"use {full_path}"))
+        await asyncio.sleep(0.5)
+        
+        # Get output to clear buffer
+        await asyncio.to_thread(lambda: console.read())
+        await asyncio.sleep(0.2)
+        
+        # Run show payloads
+        logger.debug("Running 'show payloads' command")
+        await asyncio.to_thread(lambda: console.write("show payloads"))
+        await asyncio.sleep(1.0)  # Give time for command to execute
+        
+        # Read the output
+        output = await asyncio.to_thread(lambda: console.read())
+        output_str = output.get('data', '') if isinstance(output, dict) else str(output)
+        
+        logger.debug(f"Show payloads output length: {len(output_str)} chars")
+        
+        # Parse the output to extract payload names
+        payloads = []
+        in_payload_section = False
+        
+        for line in output_str.split('\n'):
+            line = line.strip()
+            
+            # Detect start of payload list
+            if 'Compatible Payloads' in line or 'Name' in line and 'Disclosure Date' in line:
+                in_payload_section = True
+                continue
+            
+            # Skip separator lines
+            if line.startswith('===') or line.startswith('---') or line.startswith('#'):
+                continue
+            
+            # Parse payload lines (format: "   0   payload/linux/x64/shell/reverse_tcp   ...")
+            if in_payload_section and line:
+                # Look for lines with payload/ prefix
+                parts = line.split()
+                for part in parts:
+                    if part.startswith('payload/') and '/' in part:
+                        # Extract just the payload name (without payload/ prefix for internal use)
+                        payload_name = part[8:] if part.startswith('payload/') else part
+                        payloads.append(payload_name)
+                        break
+        
+        logger.info(f"Extracted {len(payloads)} compatible payloads from console output")
+        return payloads
+        
+    except Exception as e:
+        logger.error(f"Error getting compatible payloads via console: {e}")
+        return [f"Error: {e}"]
+    finally:
+        # Clean up console
+        if console_id:
+            try:
+                await asyncio.to_thread(lambda: client.consoles.destroy(console_id))
+                logger.debug(f"Destroyed console {console_id}")
+            except Exception as cleanup_err:
+                logger.warning(f"Could not destroy console {console_id}: {cleanup_err}")
+
 async def _get_module_object(module_type: str, module_name: str) -> Any:
     """Gets the MSF module object, handling potential path variations."""
     client = get_msf_client()
     base_module_name = module_name # Start assuming it's the base name
+    
     if '/' in module_name:
         parts = module_name.split('/')
+        
+        # Check for Fetch Payloads (cmd/) - cannot be loaded via RPC API
+        if module_type == 'payload' and (parts[0] == 'cmd' or (parts[0] == 'payload' and len(parts) > 1 and parts[1] == 'cmd')):
+            # Extract actual payload name for error message
+            if parts[0] == 'payload':
+                fetch_payload_name = '/'.join(parts[1:])  # Remove 'payload/' prefix
+            else:
+                fetch_payload_name = module_name
+            logger.error(f"Attempted to load Fetch Payload '{fetch_payload_name}' via RPC - not supported")
+            raise ValueError(
+                f"Cannot load Fetch Payload '{fetch_payload_name}' via RPC API. "
+                f"Fetch Payloads (cmd/*) use command stagers and require console execution. "
+                f"To use this payload, call run_exploit() with run_as_job=False to use console-based execution instead of RPC."
+            )
+        
         if parts[0] in ('exploit', 'payload', 'post', 'auxiliary', 'encoder', 'nop'):
              # Looks like full path, extract base name
              base_module_name = '/'.join(parts[1:])
@@ -749,7 +851,18 @@ async def _execute_module_rpc(
         if module_type == 'exploit' and uuid and not is_handler_module:
              start_time = asyncio.get_event_loop().time()
              logger.info(f"Exploit job {job_id} (UUID: {uuid}) started. Polling for session (timeout: {EXPLOIT_SESSION_POLL_TIMEOUT}s)...")
+             poll_count = 0
              while (asyncio.get_event_loop().time() - start_time) < EXPLOIT_SESSION_POLL_TIMEOUT:
+                 poll_count += 1
+                 elapsed = asyncio.get_event_loop().time() - start_time
+                 
+                 # Calculate progress (0-90% until session found)
+                 progress_pct = min(int((elapsed / EXPLOIT_SESSION_POLL_TIMEOUT) * 90), 90)
+                 
+                 # Log progress every few polls to avoid log spam
+                 if poll_count % 5 == 0:
+                     logger.info(f"Still polling for session (elapsed: {int(elapsed)}s, checks: {poll_count})")
+                 
                  try:
                      sessions_list = await asyncio.to_thread(lambda: client.sessions.list)
                      for s_id, s_info in sessions_list.items():
@@ -757,7 +870,7 @@ async def _execute_module_rpc(
                          s_id_str = str(s_id)
                          if isinstance(s_info, dict) and str(s_info.get('exploit_uuid')) == str(uuid):
                              found_session_id = s_id # Keep original type from list keys
-                             logger.info(f"Found matching session {found_session_id} for job {job_id} (UUID: {uuid})")
+                             logger.info(f"Found matching session {found_session_id} for job {job_id} (UUID: {uuid}) after {int(elapsed)}s and {poll_count} checks")
                              break # Exit inner loop
 
                      if found_session_id is not None: break # Exit outer loop
@@ -774,7 +887,7 @@ async def _execute_module_rpc(
                  await asyncio.sleep(EXPLOIT_SESSION_POLL_INTERVAL)
 
              if found_session_id is None:
-                 logger.warning(f"Polling timeout ({EXPLOIT_SESSION_POLL_TIMEOUT}s) reached for job {job_id}, no matching session found.")
+                 logger.warning(f"Polling timeout ({EXPLOIT_SESSION_POLL_TIMEOUT}s) reached for job {job_id}, no matching session found after {poll_count} checks.")
         elif is_handler_module:
              logger.info(f"Handler job {job_id} started successfully. No session polling needed - handler will wait for connections.")
 
@@ -807,9 +920,17 @@ async def _execute_module_rpc(
              return {"status": "error", "message": f"Missing/invalid options for {full_module_path}: {e}", "missing_required": missing}
         elif "invalid payload" in error_str:
              # Provide helpful error message with suggestions
-             error_msg = f"Invalid payload specified: {payload_name_for_log or 'None'}. "
-             error_msg += f"To view compatible payloads for this exploit, use: list_payloads(exploit_module='{module_name}'). "
-             error_msg += f"Original error: {e}"
+             # Check if architecture mismatch is likely (e.g., x86 vs x64)
+             arch_hint = ""
+             if payload_name_for_log:
+                 if '/x86/' in payload_name_for_log:
+                     arch_hint = " (Note: x86 is 32-bit. Try x64 for 64-bit targets.)"
+                 elif '/x64/' in payload_name_for_log:
+                     arch_hint = " (Note: x64 is 64-bit. Try x86 for 32-bit targets.)"
+             
+             error_msg = f"Invalid payload specified: {payload_name_for_log or 'None'}{arch_hint}. "
+             error_msg += f"To view ONLY compatible payloads for this exploit, use: list_payloads(exploit_module='{module_name}')."
+             error_msg += f" Original error: {e}"
              return {"status": "error", "message": error_msg}
         return {"status": "error", "message": f"Error running {full_module_path}: {e}"}
     except Exception as e:
@@ -869,8 +990,23 @@ async def _execute_module_console(
                     payload_options = payload_spec.get('options', {})
 
                 if payload_name:
+                    # Normalize payload name - strip 'payload/' prefix if present
+                    normalized_payload = payload_name
+                    if payload_name.startswith('payload/'):
+                        normalized_payload = payload_name[8:]
+                        logger.debug(f"Normalized payload name for console: '{payload_name}' -> '{normalized_payload}'")
+                    
                     payload_name_for_log = payload_name
                     payload_options_for_log = payload_options
+                    
+                    # Fetch Payloads (cmd/) should work via console - they use command stagers
+                    # No special handling needed here, just log it
+                    if normalized_payload.startswith('cmd/'):
+                        logger.info(f"Using Fetch Payload via console: '{normalized_payload}' (command stager-based)")
+                    
+                    # Use normalized name for setting payload
+                    payload_name = normalized_payload
+                    
                     # Need base name for 'set PAYLOAD'
                     if '/' in payload_name:
                         parts = payload_name.split('/')
@@ -899,13 +1035,21 @@ async def _execute_module_console(
                     
                     # Check if this is a payload-related error
                     if "set PAYLOAD" in cmd and ("Invalid option" in setup_output or "Error setting" in setup_output):
+                        # Add architecture hint if we can detect the issue
+                        arch_hint = ""
+                        if '/x86/' in cmd:
+                            arch_hint = " Note: x86 is 32-bit - try x64 for 64-bit targets."
+                        elif '/x64/' in cmd:
+                            arch_hint = " Note: x64 is 64-bit - try x86 for 32-bit targets."
+                        
                         # Extract base module name for error message
                         base_module_name = module_name
                         if '/' in module_name:
                             parts = module_name.split('/')
                             if parts[0] != 'exploit':
                                 base_module_name = module_name
-                        error_msg += f"\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
+                        error_msg += f"\n{arch_hint}" if arch_hint else ""
+                        error_msg += f"\nTo view ONLY compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
                     
                     logger.error(error_msg)
                     return {"status": "error", "message": error_msg, "module": full_module_path}
@@ -1052,20 +1196,34 @@ async def list_exploits(search_term: str = "") -> List[str]:
         return [f"Error: Unexpected error listing exploits: {e}"]
 
 @mcp.tool()
-async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "") -> List[str]:
+async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "", include_fetch_payloads: bool = False) -> List[str]:
     """
     List available Metasploit payloads, optionally filtered by platform, architecture, exploit module compatibility, and/or search term.
+    
+    IMPORTANT: For best results, use exploit_module parameter to get ONLY compatible payloads for a specific exploit.
+    Using platform/search_term alone returns ALL payloads, which may include incompatible architectures (x86 vs x64).
 
     Args:
         platform: Optional platform filter (e.g., 'windows', 'linux', 'python', 'php').
+                 Returns all payloads for that platform regardless of compatibility.
         arch: Optional architecture filter (e.g., 'x86', 'x64', 'cmd', 'meterpreter').
-        exploit_module: Optional exploit module name to list only compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
-                       When provided, only payloads compatible with this exploit module will be returned.
-        search_term: Optional search term to filter payloads by name (e.g., 'meterpreter', 'cmd/linux', 'reverse_tcp').
+             Filters by architecture, but doesn't guarantee exploit compatibility.
+        exploit_module: Optional exploit module name to list ONLY compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
+                       RECOMMENDED: Use this to get payloads guaranteed to work with the exploit.
+                       Returns only payloads with correct architecture and compatibility for the target.
+        search_term: Optional search term to filter payloads by name (e.g., 'meterpreter', 'reverse_tcp').
                     Supports partial matches and wildcards (*). Case-insensitive.
+                    Returns matching payloads regardless of compatibility.
+        include_fetch_payloads: If True, includes Fetch Payloads (cmd/*) in results. These require run_as_job=False to use.
+                               Default is False as they need console execution.
 
     Returns:
-        List of payload names matching filters (max 100). If exploit_module is provided, returns compatible payloads for that module.
+        List of payload names matching filters (max 100), prefixed with 'payload/' to match msfconsole format.
+        Example: 'payload/linux/x64/meterpreter/reverse_tcp'
+        
+        Note: Fetch Payloads (payload/cmd/*) are excluded by default. Set include_fetch_payloads=True to see them.
+              Fetch Payloads use command stagers (CURL, TFTP, CERTUTIL) and require console execution (run_as_job=False).
+              You can use payloads with or without the 'payload/' prefix in run_exploit() - it will be normalized automatically.
     """
     client = get_msf_client()
     logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}', search: '{search_term or 'Any'}')")
@@ -1095,9 +1253,19 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 logger.error(f"Exploit module '{exploit_module}' not found: {ve}")
                 return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
             except AttributeError:
-                # If compatible_payloads doesn't exist, inform the caller
-                logger.error(f"Module object for '{exploit_module}' doesn't support compatible_payloads method.")
-                return [f"Error: Exploit module '{exploit_module}' doesn't support querying compatible payloads. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
+                # If compatible_payloads doesn't exist via RPC, try console method
+                logger.warning(f"Module object for '{exploit_module}' doesn't support compatible_payloads via RPC. Trying console method...")
+                try:
+                    console_payloads = await _get_compatible_payloads_console(exploit_module)
+                    if console_payloads and not console_payloads[0].startswith("Error:"):
+                        logger.info(f"Successfully retrieved {len(console_payloads)} compatible payloads via console for {exploit_module}")
+                        filtered = console_payloads
+                    else:
+                        logger.error(f"Console method also failed for '{exploit_module}'")
+                        return [f"Error: Could not retrieve compatible payloads for exploit module '{exploit_module}'. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
+                except Exception as console_err:
+                    logger.error(f"Console fallback failed: {console_err}")
+                    return [f"Error: Could not retrieve compatible payloads for exploit module '{exploit_module}'. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
         else:
             # Add timeout to prevent hanging on slow/unresponsive MSF server
             logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
@@ -1129,10 +1297,32 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 # Simple substring match
                 filtered = [p for p in filtered if search_lower in p.lower()]
 
-        count = len(filtered)
+        # Filter out 'cmd/' Fetch Payloads by default unless explicitly requested
+        # These use command stagers (CURL, TFTP, CERTUTIL) and can't be loaded via RPC API
+        # Users can still use them by providing the name directly with run_as_job=False
+        cleaned_payloads = []
+        filtered_count = 0
+        for payload in filtered:
+            if payload.startswith('cmd/'):
+                if include_fetch_payloads:
+                    logger.debug(f"Including Fetch Payload (requires console execution): '{payload}'")
+                    # Add payload/ prefix to match msfconsole format
+                    cleaned_payloads.append(f"payload/{payload}")
+                else:
+                    logger.debug(f"Filtering out Fetch Payload (requires console execution): '{payload}'")
+                    filtered_count += 1
+                    continue  # Skip cmd/ payloads from list by default
+            else:
+                # Add payload/ prefix to match msfconsole format (e.g., payload/linux/x64/meterpreter/reverse_tcp)
+                cleaned_payloads.append(f"payload/{payload}")
+        
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} Fetch Payloads (cmd/*). Set include_fetch_payloads=True to see them.")
+        
+        count = len(cleaned_payloads)
         limit = 100
         logger.info(f"Found {count} payloads matching filters. Returning max {limit}.")
-        return filtered[:limit]
+        return cleaned_payloads[:limit]
     except asyncio.TimeoutError:
         error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing payloads from Metasploit server. Server may be slow or unresponsive."
         logger.error(error_msg)
@@ -1382,6 +1572,7 @@ async def generate_payload(
 async def run_exploit(
     module_name: str,
     options: Dict[str, Any],
+    ctx: Context,
     payload_name: Optional[str] = None,
     payload_options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = False,
@@ -1444,6 +1635,36 @@ async def run_exploit(
 
     payload_spec = None
     if payload_name:
+        # Normalize payload name format - strip 'payload/' prefix if present for internal use
+        # But detect Fetch Payloads and guide user
+        normalized_payload = payload_name
+        if payload_name.startswith('payload/'):
+            # Strip payload/ prefix for internal processing
+            normalized_payload = payload_name[8:]
+            logger.debug(f"Normalized payload name: '{payload_name}' -> '{normalized_payload}'")
+        
+        # Detect Fetch Payloads (cmd/) and guide user to console execution
+        if normalized_payload.startswith('cmd/') and run_as_job:
+            logger.warning(f"Fetch Payload '{normalized_payload}' detected with run_as_job=True. Fetch Payloads require console execution.")
+            return {
+                "status": "error",
+                "message": (
+                    f"Fetch Payload '{payload_name}' cannot be used with run_as_job=True. "
+                    f"Fetch Payloads (cmd/*) use command stagers (like CURL, TFTP, CERTUTIL) and require console-based execution. "
+                    f"\n\nTo use this payload, set run_as_job=False in your request. Example:\n"
+                    f"run_exploit(\n"
+                    f"    module_name='{module_name}',\n"
+                    f"    payload_name='{payload_name}',\n"
+                    f"    run_as_job=False,  # Required for Fetch Payloads\n"
+                    f"    ...\n"
+                    f")\n\n"
+                    f"Alternatively, use a standard payload like 'payload/{normalized_payload.replace('cmd/', '').split('/')[0]}/x64/meterpreter/reverse_tcp'"
+                )
+            }
+        
+        # Use normalized payload name (without payload/ prefix) for spec
+        payload_name = normalized_payload
+        
         payload_spec = {"name": payload_name, "options": parsed_payload_options}
         
         # Check if LPORT is provided and if the port is available
@@ -1692,6 +1913,7 @@ async def list_active_sessions() -> Dict[str, Any]:
 async def send_session_command(
     session_id: int,
     command: str,
+    ctx: Context,
     timeout_seconds: int = SESSION_COMMAND_TIMEOUT,
 ) -> Dict[str, Any]:
     """
