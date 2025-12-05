@@ -131,11 +131,15 @@ MetasploitMCP/
 │   ├── test_helpers.py       # Helper function tests
 │   ├── test_ip_validation.py # Security validation tests
 │   ├── test_options_parsing.py # Input parsing tests
-│   └── test_tools_integration.py # Integration tests
+│   ├── test_tools_integration.py # Integration tests
+│   └── test_metasploitable3_harness.py # Integration test harness tests
 ├── docs/                     # Documentation
 │   ├── API.md               # Complete API reference
 │   ├── DEVELOPMENT.md       # Development guide
-│   └── POETRY_MIGRATION.md  # Migration guide
+│   ├── TROUBLESHOOTING.md   # Common issues and solutions
+│   ├── METASPLOITABLE3_TESTING.md # Integration testing guide
+│   └── QUICK_START_TESTING.md # Quick start for testing
+├── examples/                 # Example scripts
 ├── CHANGELOG.md             # Version history
 └── CONTRIBUTING.md          # Contribution guidelines
 ```
@@ -283,6 +287,9 @@ For detailed documentation, see:
 
 - **[API Reference](docs/API.md)**: Complete tool documentation with examples
 - **[Development Guide](docs/DEVELOPMENT.md)**: Setup, testing, and contribution guidelines
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)**: Common issues and solutions
+- **[Integration Testing](docs/METASPLOITABLE3_TESTING.md)**: Testing with Metasploitable 3
+- **[Quick Start Testing](docs/QUICK_START_TESTING.md)**: 5-minute testing setup
 - **[Poetry Migration](docs/POETRY_MIGRATION.md)**: Migration from requirements.txt
 - **[Changelog](CHANGELOG.md)**: Version history and breaking changes
 - **[Contributing](CONTRIBUTING.md)**: How to contribute to the project
