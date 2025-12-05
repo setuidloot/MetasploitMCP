@@ -469,7 +469,7 @@ class TestIntegrationScenarios:
         
         # Verify test configuration
         assert proftpd_test.module == "exploit/unix/ftp/proftpd_modcopy_exec"
-        assert proftpd_test.payload == "cmd/unix/reverse_perl"
+        assert proftpd_test.payload == "unix/reverse_perl"
         assert proftpd_test.options["RPORT"] == "80"
         assert proftpd_test.options["RPORT_FTP"] == "21"
     
