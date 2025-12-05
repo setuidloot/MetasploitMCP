@@ -163,8 +163,8 @@ def test_search_term_simple_match():
         'windows/x64/meterpreter/reverse_tcp',
         'windows/x64/shell/reverse_tcp',
         'linux/x86/meterpreter/reverse_tcp',
-        'cmd/unix/reverse_bash',
-        'cmd/windows/reverse_powershell',
+        'unix/reverse_bash',
+        'windows/reverse_powershell',
     ]
     
     # Test simple search
@@ -187,39 +187,40 @@ def test_search_term_wildcard_match():
         'windows/x64/meterpreter/reverse_tcp',
         'windows/x64/shell/reverse_tcp',
         'linux/x86/meterpreter/reverse_tcp',
-        'cmd/unix/reverse_bash',
-        'cmd/windows/reverse_powershell',
+        'unix/reverse_bash',
+        'windows/reverse_powershell',
     ]
     
     # Test wildcard search
-    search_term = 'cmd/*/reverse*'
+    search_term = '*/reverse*'
     pattern = re.compile(search_term.lower().replace('*', '.*'))
     filtered = [p for p in all_payloads if pattern.search(p.lower())]
     
-    assert len(filtered) == 2
-    assert 'cmd/unix/reverse_bash' in filtered
-    assert 'cmd/windows/reverse_powershell' in filtered
+    assert len(filtered) == 5  # All payloads have 'reverse' in the name
+    assert 'unix/reverse_bash' in filtered
+    assert 'windows/reverse_powershell' in filtered
+    assert 'windows/x64/meterpreter/reverse_tcp' in filtered
     
     print(f"✓ Wildcard search_term filtering works: '{search_term}' found {len(filtered)} payloads")
 
 
 def test_search_term_path_pattern():
-    """Test that search_term can match payload path patterns like 'cmd/linux'."""
+    """Test that search_term can match payload path patterns like 'linux/x86'."""
     # Sample payloads
     all_payloads = [
-        'cmd/unix/reverse_bash',
-        'cmd/windows/reverse_powershell',
-        'cmd/linux/http',
+        'unix/reverse_bash',
+        'windows/reverse_powershell',
+        'linux/http',
         'linux/x86/meterpreter/reverse_tcp',
-        'windows/cmd/exec',
+        'windows/exec',
     ]
     
     # Test path pattern search
-    search_term = 'cmd/linux'
+    search_term = 'linux/x86'
     filtered = [p for p in all_payloads if search_term.lower() in p.lower()]
     
     assert len(filtered) == 1
-    assert 'cmd/linux/http' in filtered
+    assert 'linux/x86/meterpreter/reverse_tcp' in filtered
     
     print(f"✓ Path pattern search_term filtering works: '{search_term}' found {len(filtered)} payloads")
 
@@ -248,7 +249,7 @@ def test_combined_filters():
         'windows/x64/shell/reverse_tcp',
         'linux/x86/meterpreter/reverse_tcp',
         'linux/x64/shell/reverse_tcp',
-        'cmd/unix/reverse_bash',
+        'unix/reverse_bash',
     ]
     
     # Filter by platform
