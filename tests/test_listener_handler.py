@@ -69,3 +69,4 @@ class TestMessageConstruction:
         assert status == "warning"
         assert "No session detected within timeout" in message
 
+
