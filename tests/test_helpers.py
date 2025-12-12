@@ -54,7 +54,7 @@ sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 from MetasploitMCP import (
     _get_module_object, _set_module_options, initialize_msf_client, 
     get_msf_client, get_msf_console, run_command_safely,
-    find_available_port
+    find_available_port, InvalidModuleError, _find_similar_modules
 )
 
 
@@ -142,9 +142,38 @@ class TestGetModuleObject:
         """Test module object retrieval when module not found."""
         mock_client.modules.use.side_effect = KeyError("Module not found")
         
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(InvalidModuleError) as exc_info:
             await _get_module_object('exploit', 'nonexistent/module')
+        
+        # Verify exception has proper attributes
+        assert exc_info.value.module_type == 'exploit'
+        assert exc_info.value.module_name == 'nonexistent/module'
+        assert 'not found' in str(exc_info.value)
 
+    @pytest.mark.asyncio
+    async def test_get_module_object_invalid_module_error(self, mock_client):
+        """Test module object retrieval when Metasploit returns Invalid Module error."""
+        # Simulate the RPC call returning an error dict (Invalid Module)
+        mock_client.call = Mock(return_value={
+            'error': True,
+            'error_class': 'Msf::RPC::Exception',
+            'error_message': 'Invalid Module',
+            'error_backtrace': [
+                'lib/msf/core/rpc/v10/rpc_base.rb:26:in error',
+                'lib/msf/core/rpc/v10/rpc_module.rb:743:in _find_module'
+            ]
+        })
+        
+        with pytest.raises(InvalidModuleError) as exc_info:
+            await _get_module_object('auxiliary', 'scanner/http/nonexistent')
+        
+        # Verify the exception message is clean (no backtrace)
+        error_message = str(exc_info.value)
+        assert 'not found' in error_message
+        # Verify backtrace is NOT in the exception message
+        assert 'rpc_base.rb' not in error_message
+        assert 'Backtrace' not in error_message
+        
     @pytest.mark.asyncio
     async def test_get_module_object_msf_error(self, mock_client):
         """Test module object retrieval with MSF RPC error."""
@@ -152,6 +181,158 @@ class TestGetModuleObject:
         
         with pytest.raises(MockMsfRpcError, match="RPC Error"):
             await _get_module_object('exploit', 'test/module')
+
+
+class TestInvalidModuleErrorException:
+    """Test the InvalidModuleError exception class."""
+
+    def test_invalid_module_error_creation(self):
+        """Test creating an InvalidModuleError."""
+        error = InvalidModuleError(
+            module_type='exploit',
+            module_name='windows/smb/fake_module',
+            message='Module not found'
+        )
+        
+        assert error.module_type == 'exploit'
+        assert error.module_name == 'windows/smb/fake_module'
+        assert str(error) == 'Module not found'
+
+    def test_invalid_module_error_is_value_error(self):
+        """Test that InvalidModuleError is a subclass of ValueError."""
+        error = InvalidModuleError(
+            module_type='auxiliary',
+            module_name='scanner/test',
+            message='Test error'
+        )
+        
+        # Should be catchable as ValueError for backwards compatibility
+        assert isinstance(error, ValueError)
+        
+    def test_invalid_module_error_no_traceback_in_message(self):
+        """Test that error message is clean without traceback."""
+        error = InvalidModuleError(
+            module_type='payload',
+            module_name='unix/meterpreter/reverse_tcp',
+            message="Module 'payload/unix/meterpreter/reverse_tcp' not found in Metasploit."
+        )
+        
+        error_str = str(error)
+        # Should not contain any backtrace information
+        assert 'Traceback' not in error_str
+        assert 'rpc_base.rb' not in error_str
+        assert 'rpc_module.rb' not in error_str
+
+    def test_invalid_module_error_with_suggestions(self):
+        """Test that error message can include suggestions."""
+        error = InvalidModuleError(
+            module_type='auxiliary',
+            module_name='scanner/http/nikto',
+            message="Module 'auxiliary/scanner/http/nikto' not found in Metasploit.\n\n"
+                    "Did you mean one of these?\n"
+                    "  - auxiliary/scanner/http/dir_scanner\n"
+                    "  - auxiliary/scanner/http/http_version"
+        )
+        
+        error_str = str(error)
+        assert 'Did you mean' in error_str
+        assert 'dir_scanner' in error_str
+        assert 'http_version' in error_str
+
+
+class TestFindSimilarModules:
+    """Test the _find_similar_modules helper function."""
+
+    @pytest.fixture
+    def mock_client(self):
+        """Fixture providing a mock MSF client."""
+        client = Mock()
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            yield client
+
+    @pytest.mark.asyncio
+    async def test_find_similar_modules_exploit(self, mock_client):
+        """Test finding similar exploit modules."""
+        # Mock available exploits
+        mock_client.modules.exploits = [
+            'windows/smb/ms17_010_eternalblue',
+            'windows/smb/ms08_067_netapi',
+            'linux/http/apache_mod_cgi_bash_env_exec',
+            'multi/http/apache_normalize_path_rce',
+        ]
+        
+        # Search for "eternalblue" - should find the matching module
+        suggestions = await _find_similar_modules('exploit', 'windows/smb/eternalblue')
+        
+        assert len(suggestions) > 0
+        assert any('eternalblue' in s for s in suggestions)
+
+    @pytest.mark.asyncio
+    async def test_find_similar_modules_payload(self, mock_client):
+        """Test finding similar payload modules."""
+        # Mock available payloads
+        mock_client.modules.payloads = [
+            'linux/x64/meterpreter/reverse_tcp',
+            'linux/x64/meterpreter_reverse_tcp',
+            'windows/x64/meterpreter/reverse_tcp',
+            'windows/meterpreter/reverse_https',
+            'python/meterpreter/reverse_tcp',
+        ]
+        
+        # Search for "meterpreter reverse_tcp" - should find matching modules
+        suggestions = await _find_similar_modules('payload', 'unix/meterpreter/reverse_tcp')
+        
+        assert len(suggestions) > 0
+        # Should find meterpreter payloads
+        assert any('meterpreter' in s for s in suggestions)
+
+    @pytest.mark.asyncio
+    async def test_find_similar_modules_auxiliary(self, mock_client):
+        """Test finding similar auxiliary modules."""
+        # Mock available auxiliary modules
+        mock_client.modules.auxiliary = [
+            'scanner/http/dir_scanner',
+            'scanner/http/http_version',
+            'scanner/http/robots_txt',
+            'scanner/portscan/tcp',
+            'scanner/smb/smb_version',
+        ]
+        
+        # Search for "nikto" (doesn't exist) but has "http" - should find http scanners
+        suggestions = await _find_similar_modules('auxiliary', 'scanner/http/nikto')
+        
+        # May or may not find matches depending on term extraction
+        # But should not raise an exception
+        assert isinstance(suggestions, list)
+
+    @pytest.mark.asyncio
+    async def test_find_similar_modules_no_matches(self, mock_client):
+        """Test when no similar modules are found."""
+        mock_client.modules.exploits = [
+            'windows/smb/ms17_010_eternalblue',
+        ]
+        
+        # Search for something completely unrelated
+        suggestions = await _find_similar_modules('exploit', 'totally/unrelated/xyz123')
+        
+        # Should return empty list, not raise exception
+        assert suggestions == []
+
+    @pytest.mark.asyncio
+    async def test_find_similar_modules_timeout(self, mock_client):
+        """Test that timeout is handled gracefully."""
+        # Make the module list call hang
+        async def slow_call():
+            await asyncio.sleep(10)
+            return []
+        
+        mock_client.modules.exploits = []
+        
+        with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError()):
+            suggestions = await _find_similar_modules('exploit', 'some/module')
+        
+        # Should return empty list on timeout
+        assert suggestions == []
 
 
 class TestSetModuleOptions:

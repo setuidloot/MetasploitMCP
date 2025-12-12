@@ -18,10 +18,30 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from fastmcp import FastMCP, Context
 from pymetasploit3.msfrpc import MsfConsole, MsfRpcClient, MsfRpcError
 
+# --- Event Loop Monitoring ---
+from event_loop_monitor import (
+    configure_event_loop_debugging, stop_event_loop_monitoring,
+    get_monitoring_stats, check_event_loop_health
+)
+
+# --- Custom Exceptions ---
+
+class InvalidModuleError(ValueError):
+    """
+    Raised when a Metasploit module cannot be found or is invalid.
+    
+    This is a clean exception for expected "module not found" scenarios,
+    avoiding noisy stack traces in logs for simple user input errors.
+    """
+    def __init__(self, module_type: str, module_name: str, message: str):
+        self.module_type = module_type
+        self.module_name = module_name
+        super().__init__(message)
+
 # --- Configuration & Constants ---
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    level=os.environ.get("LOG_LEVEL", "DEBUG").upper(),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("metasploit_mcp_server")
@@ -598,6 +618,81 @@ async def _get_compatible_payloads_console(exploit_module: str) -> List[str]:
             except Exception as cleanup_err:
                 logger.warning(f"Could not destroy console {console_id}: {cleanup_err}")
 
+async def _find_similar_modules(module_type: str, module_name: str, max_suggestions: int = 5) -> List[str]:
+    """
+    Find similar module names to suggest when a module isn't found.
+    
+    Extracts keywords from the module name and searches available modules.
+    Returns up to max_suggestions matching modules.
+    """
+    try:
+        client = get_msf_client()
+        
+        # Extract search terms from the module name
+        # Split by '/' and '_' to get individual terms
+        parts = module_name.replace('_', '/').split('/')
+        # Filter out common/generic terms and keep meaningful ones
+        generic_terms = {'exploit', 'payload', 'auxiliary', 'post', 'scanner', 'admin', 
+                        'multi', 'generic', 'cmd', 'x86', 'x64', 'linux', 'windows', 
+                        'unix', 'osx', 'freebsd', 'solaris', 'reverse', 'bind', 'staged', 
+                        'stageless', 'http', 'https', 'tcp', 'udp'}
+        search_terms = [p.lower() for p in parts if len(p) > 2 and p.lower() not in generic_terms]
+        
+        if not search_terms:
+            # Fall back to the last part of the path
+            search_terms = [parts[-1].lower()] if parts else []
+        
+        if not search_terms:
+            return []
+        
+        # Get the list of modules for this type
+        module_list: List[str] = []
+        try:
+            if module_type == 'exploit':
+                module_list = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: client.modules.exploits),
+                    timeout=5.0  # Short timeout for suggestions
+                )
+            elif module_type == 'payload':
+                module_list = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: client.modules.payloads),
+                    timeout=5.0
+                )
+            elif module_type == 'auxiliary':
+                module_list = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: client.modules.auxiliary),
+                    timeout=5.0
+                )
+            elif module_type == 'post':
+                module_list = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: client.modules.post),
+                    timeout=5.0
+                )
+        except asyncio.TimeoutError:
+            logger.debug(f"Timeout getting module list for suggestions")
+            return []
+        
+        # Score modules by how many search terms they match
+        scored_modules: List[tuple] = []
+        for mod in module_list:
+            mod_lower = mod.lower()
+            # Count matching terms
+            matches = sum(1 for term in search_terms if term in mod_lower)
+            if matches > 0:
+                scored_modules.append((matches, mod))
+        
+        # Sort by score (descending) and take top suggestions
+        scored_modules.sort(key=lambda x: (-x[0], x[1]))  # Sort by score desc, then name asc
+        suggestions = [f"{module_type}/{mod}" for _, mod in scored_modules[:max_suggestions]]
+        
+        logger.debug(f"Found {len(suggestions)} similar modules for '{module_name}': {suggestions}")
+        return suggestions
+        
+    except Exception as e:
+        logger.debug(f"Error finding similar modules: {e}")
+        return []
+
+
 async def _get_module_object(module_type: str, module_name: str) -> Any:
     """Gets the MSF module object, handling potential path variations."""
     client = get_msf_client()
@@ -628,6 +723,66 @@ async def _get_module_object(module_type: str, module_name: str) -> Any:
         # Else: Assume it's like 'windows/smb/ms17_010_eternalblue' - already the base name
 
     logger.debug(f"Attempting to retrieve module: client.modules.use('{module_type}', '{base_module_name}')")
+    
+    # First, make a raw RPC call to check the response before pymetasploit3 tries to wrap it.
+    # This allows us to capture the actual Metasploit response for better error messages.
+    try:
+        # The RPC call that pymetasploit3 makes internally
+        rpc_response = await asyncio.to_thread(
+            lambda: client.call('module.info', [module_type, base_module_name])
+        )
+        logger.debug(f"Raw RPC response for module.info({module_type}, {base_module_name}): {rpc_response}")
+        
+        # Check if Metasploit returned an error or unexpected response
+        if isinstance(rpc_response, bool):
+            # Metasploit returned False - module not found or incompatible
+            raise ValueError(
+                f"Module '{module_type}/{base_module_name}' not found or incompatible. "
+                f"Metasploit returned: {rpc_response}. "
+                f"Verify the module name is correct and available in your Metasploit installation."
+            )
+        elif isinstance(rpc_response, dict) and rpc_response.get('error'):
+            # Metasploit returned an error dict
+            error_class = rpc_response.get('error_class', 'UnknownError')
+            error_message = rpc_response.get('error_message', 'No error message provided')
+            error_backtrace = rpc_response.get('error_backtrace', [])
+            
+            # Check if this is a simple "Invalid Module" error (expected user error, not a bug)
+            is_invalid_module = 'Invalid Module' in error_message or error_class == 'Msf::RPC::Exception'
+            
+            if is_invalid_module:
+                # Log backtrace at DEBUG level only for invalid module errors
+                if error_backtrace:
+                    backtrace_str = '\n  '.join(error_backtrace[:3])
+                    logger.debug(f"Metasploit backtrace for invalid module '{module_type}/{base_module_name}': {backtrace_str}")
+                
+                # Find similar modules to suggest
+                suggestions = await _find_similar_modules(module_type, base_module_name)
+                suggestion_text = ""
+                if suggestions:
+                    suggestion_text = f"\n\nDid you mean one of these?\n  - " + "\n  - ".join(suggestions)
+                
+                # Raise clean exception without backtrace in message
+                raise InvalidModuleError(
+                    module_type=module_type,
+                    module_name=base_module_name,
+                    message=f"Module '{module_type}/{base_module_name}' not found in Metasploit.{suggestion_text}"
+                )
+            else:
+                # For other errors, include more detail (these may indicate actual bugs)
+                backtrace_str = '\n  '.join(error_backtrace[:3]) if error_backtrace else ''
+                raise ValueError(
+                    f"Metasploit error loading module '{module_type}/{base_module_name}': "
+                    f"{error_class} - {error_message}"
+                    + (f"\n  Backtrace:\n  {backtrace_str}" if backtrace_str else "")
+                )
+    except (ValueError, InvalidModuleError):
+        # Re-raise ValueError/InvalidModuleError from our checks above
+        raise
+    except Exception as info_err:
+        # Log but continue - the module.info call might fail for valid modules in some cases
+        logger.debug(f"module.info pre-check failed (may be okay): {info_err}")
+    
     try:
         module_obj = await asyncio.to_thread(lambda: client.modules.use(module_type, base_module_name))
         logger.debug(f"Successfully retrieved module object for {module_type}/{base_module_name}")
@@ -636,11 +791,64 @@ async def _get_module_object(module_type: str, module_name: str) -> Any:
         # KeyError can be raised by pymetasploit3 if module not found
         error_str = str(e).lower()
         if "unknown module" in error_str or "invalid module" in error_str or isinstance(e, KeyError):
-             logger.error(f"Module {module_type}/{base_module_name} (from input {module_name}) not found.")
-             raise ValueError(f"Module '{module_name}' of type '{module_type}' not found.") from e
+             logger.warning(f"Module '{module_type}/{base_module_name}' not found in Metasploit.")
+             
+             # Find similar modules to suggest
+             suggestions = await _find_similar_modules(module_type, base_module_name)
+             suggestion_text = ""
+             if suggestions:
+                 suggestion_text = f"\n\nDid you mean one of these?\n  - " + "\n  - ".join(suggestions)
+             
+             raise InvalidModuleError(
+                 module_type=module_type,
+                 module_name=base_module_name,
+                 message=f"Module '{module_type}/{base_module_name}' not found.{suggestion_text}"
+             ) from e
         else:
              logger.error(f"MsfRpcError getting module {module_type}/{base_module_name}: {e}")
              raise MsfRpcError(f"Error retrieving module '{module_name}': {e}") from e
+    except TypeError as e:
+        # TypeError occurs when pymetasploit3 receives unexpected response format from RPC
+        # e.g., "'bool' object is not subscriptable" when options dict is returned as boolean
+        # Try to get more info from a direct RPC call
+        try:
+            options_response = await asyncio.to_thread(
+                lambda: client.call('module.options', [module_type, base_module_name])
+            )
+            logger.debug(f"Raw module.options response: {options_response}")
+            
+            if isinstance(options_response, bool):
+                raise ValueError(
+                    f"Module '{module_type}/{base_module_name}' failed to load. "
+                    f"Metasploit returned '{options_response}' instead of module options. "
+                    f"This typically means the module does not exist or failed to initialize. "
+                    f"Verify the module path is correct."
+                )
+            elif isinstance(options_response, dict) and options_response.get('error'):
+                error_class = options_response.get('error_class', 'UnknownError')
+                error_message = options_response.get('error_message', 'No error message provided')
+                raise ValueError(
+                    f"Metasploit error for module '{module_type}/{base_module_name}': "
+                    f"{error_class} - {error_message}"
+                )
+            else:
+                # Unknown response format
+                raise ValueError(
+                    f"Unexpected response from Metasploit for module '{module_type}/{base_module_name}': "
+                    f"{type(options_response).__name__} = {str(options_response)[:200]}"
+                )
+        except ValueError:
+            raise
+        except Exception as inner_err:
+            # Fallback error message if we can't get more details
+            logger.error(f"TypeError loading module {module_type}/{base_module_name}: {e}. "
+                         f"Additional info retrieval failed: {inner_err}")
+            raise ValueError(
+                f"Failed to load module '{module_name}' of type '{module_type}'. "
+                f"Metasploit returned an invalid response (expected dict, got unexpected type). "
+                f"This usually indicates the module doesn't exist or failed to initialize. "
+                f"Try using run_as_job=False for console-based execution, or verify the module name is correct."
+            ) from e
 
 async def _get_module_valid_options(module_obj: Any) -> set:
     """Get the set of valid option names for a module by querying Metasploit."""
@@ -792,6 +1000,10 @@ async def _execute_module_rpc(
                  await _set_module_options(payload_obj, payload_options, module_type='payload')
                  payload_obj_to_pass = payload_obj # Pass the configured payload object
                  logger.info(f"Executing {full_module_path} with configured payload object for '{payload_name}'.")
+             except InvalidModuleError as e:
+                 # Clean warning for invalid payload module (not a bug, just wrong module name)
+                 logger.warning(f"Payload module '{payload_name}' not found: {e}")
+                 return {"status": "error", "message": f"Payload '{payload_name}' not found in Metasploit. Verify the payload name is correct."}
              except (ValueError, MsfRpcError) as e:
                  logger.error(f"Failed to prepare payload object for '{payload_name}': {e}")
                  return {"status": "error", "message": f"Failed to prepare payload '{payload_name}': {e}"}
@@ -1111,11 +1323,20 @@ async def _execute_module_console(
                  status = "warning"
             elif command in ['exploit', 'run'] and session_id is not None:
                  message += f" Session {session_id} detected."
+            elif command in ['exploit', 'run'] and session_id is None:
+                 # No session detected and no hints of session activity - this is not truly "success" for an exploit
+                 status = "no_session"
+                 message = f"{module_type.capitalize()} module {full_module_path} completed but no session was created. " \
+                          "This may indicate: payload failed to connect back (check LHOST/LPORT and firewall), " \
+                          "target is not vulnerable, or exploit requires manual interaction. Check module_output for details."
 
             # Check for common failure indicators (but not if we timed out)
-            if not timed_out and any(fail in module_output.lower() for fail in ['exploit completed, but no session was created', 'exploit failed', 'run failed', 'check failed', 'module check failed']):
-                 status = "error" if status != "warning" else status # Don't override warning if session might have opened
-                 message = f"{module_type.capitalize()} module {full_module_path} execution via console appears to have failed. Check output."
+            # Note: "exploit completed, but no session was created" is now handled by "no_session" status above
+            failure_indicators = ['exploit failed', 'run failed', 'check failed', 'module check failed']
+            if not timed_out and any(fail in module_output.lower() for fail in failure_indicators):
+                 status = "error" if status not in ("warning", "no_session") else status # Don't override warning/no_session with error
+                 if status == "error":  # Only update message if we're setting error status
+                     message = f"{module_type.capitalize()} module {full_module_path} execution via console appears to have failed. Check output."
                  logger.error(f"Failure detected in console output for {full_module_path}.")
                  
                  # Check if the failure might be payload-related
@@ -1248,9 +1469,9 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 # compatible_payloads returns a list of payload names
                 filtered = compatible
                 
-            except ValueError as ve:
+            except (ValueError, InvalidModuleError) as ve:
                 # Module not found
-                logger.error(f"Exploit module '{exploit_module}' not found: {ve}")
+                logger.warning(f"Exploit module '{exploit_module}' not found: {ve}")
                 return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
             except AttributeError:
                 # If compatible_payloads doesn't exist via RPC, try console method
@@ -1322,7 +1543,17 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
         count = len(cleaned_payloads)
         limit = 100
         logger.info(f"Found {count} payloads matching filters. Returning max {limit}.")
-        return cleaned_payloads[:limit]
+        
+        # DEBUG: Log the actual return value for debugging "Tool executed successfully" issue
+        result = cleaned_payloads[:limit]
+        logger.info(f"🔍 DEBUG list_payloads: Returning {len(result)} items")
+        if result:
+            logger.info(f"🔍 DEBUG list_payloads: First 3 items: {result[:3]}")
+            logger.info(f"🔍 DEBUG list_payloads: Return type: {type(result)}, item type: {type(result[0]) if result else 'N/A'}")
+        else:
+            logger.warning(f"🔍 DEBUG list_payloads: Returning EMPTY list!")
+        
+        return result
     except asyncio.TimeoutError:
         error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing payloads from Metasploit server. Server may be slow or unresponsive."
         logger.error(error_msg)
@@ -1550,6 +1781,10 @@ async def generate_payload(
                 "payload_size": payload_size, "format": format_type
             }
 
+    except InvalidModuleError as e:
+        # Clean warning for invalid payload module (not a bug, just wrong module name)
+        logger.warning(f"Payload type '{payload_type}' not found: {e}")
+        return {"status": "error", "message": f"Invalid payload type: {payload_type}. Verify the payload name is correct and available in your Metasploit installation."}
     except (ValueError, MsfRpcError) as e: # Catches errors from _get_module_object, _set_module_options
         error_str = str(e).lower()
         logger.error(f"Error generating payload {payload_type}: {e}")
@@ -1571,11 +1806,11 @@ async def generate_payload(
 @mcp.tool()
 async def run_exploit(
     module_name: str,
-    options: Dict[str, Any],
+    options: Union[Dict[str, Any], str],
     ctx: Context,
     payload_name: Optional[str] = None,
     payload_options: Optional[Union[Dict[str, Any], str]] = None,
-    run_as_job: bool = False,
+    run_as_job: bool = True,
     check_vulnerability: bool = False, # New option
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT # Used only if run_as_job=False
 ) -> Dict[str, Any]:
@@ -1612,13 +1847,14 @@ async def run_exploit(
 
     Args:
         module_name: Name/path of the exploit module (e.g., 'unix/ftp/vsftpd_234_backdoor').
-        options: Dictionary of exploit module options (e.g., {'RHOSTS': '192.168.1.1'}).
+        options: Dictionary of exploit module options (e.g., {'RHOSTS': '192.168.1.1'})
+                or string format "RHOSTS=192.168.1.1,RPORT=21". Prefer dict format.
         payload_name: Name of the payload (e.g., 'linux/x86/meterpreter/reverse_tcp').
                      When specified, this function AUTOMATICALLY creates the handler/listener.
         payload_options: Dictionary of payload options (e.g., {'LHOST': '...', 'LPORT': ...})
                         or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
                         AUTOMATICALLY creates the listener on the specified LHOST/LPORT.
-        run_as_job: If False (default), run sync via console. If True, run async via RPC.
+        run_as_job: If False, run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console.
 
@@ -1626,6 +1862,12 @@ async def run_exploit(
         Dictionary with execution results (job_id, session_id, output) or error details.
     """
     logger.info(f"Request to run exploit '{module_name}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload_name}")
+    
+    # Parse options gracefully (handles both dict and string formats)
+    try:
+        parsed_options = _parse_options_gracefully(options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid options format: {e}"}
 
     # Parse payload options gracefully
     try:
@@ -1690,7 +1932,7 @@ async def run_exploit(
              check_result = await _execute_module_console(
                  module_type='exploit',
                  module_name=module_name,
-                 module_options=options,
+                 module_options=parsed_options,
                  command='check', # Use the 'check' command
                  timeout=timeout_seconds
              )
@@ -1720,24 +1962,28 @@ async def run_exploit(
     # Execute the exploit
     exploit_start_time = asyncio.get_event_loop().time()
     
-    if run_as_job:
-        logger.info(f"Executing exploit '{module_name}' as background job via RPC")
-        result = await _execute_module_rpc(
-            module_type='exploit',
-            module_name=module_name,
-            module_options=options,
-            payload_spec=payload_spec
-        )
-    else:
-        logger.info(f"Executing exploit '{module_name}' synchronously via console (timeout: {timeout_seconds}s)")
-        result = await _execute_module_console(
-            module_type='exploit',
-            module_name=module_name,
-            module_options=options,
-            command='exploit',
-            payload_spec=payload_spec,
-            timeout=timeout_seconds
-        )
+    try:
+        if run_as_job:
+            logger.info(f"Executing exploit '{module_name}' as background job via RPC")
+            result = await _execute_module_rpc(
+                module_type='exploit',
+                module_name=module_name,
+                module_options=parsed_options,
+                payload_spec=payload_spec
+            )
+        else:
+            logger.info(f"Executing exploit '{module_name}' synchronously via console (timeout: {timeout_seconds}s)")
+            result = await _execute_module_console(
+                module_type='exploit',
+                module_name=module_name,
+                module_options=parsed_options,
+                command='exploit',
+                payload_spec=payload_spec,
+                timeout=timeout_seconds
+            )
+    except InvalidModuleError as e:
+        logger.warning(f"Exploit module '{module_name}' not found: {e}")
+        return {"status": "error", "message": str(e)}
     
     exploit_duration = asyncio.get_event_loop().time() - exploit_start_time
     logger.info(f"Exploit '{module_name}' execution completed in {exploit_duration:.1f}s with status: {result.get('status')}")
@@ -1748,8 +1994,8 @@ async def run_exploit(
 async def run_post_module(
     module_name: str,
     session_id: int,
-    options: Optional[Dict[str, Any]] = None,
-    run_as_job: bool = False,
+    options: Optional[Union[Dict[str, Any], str]] = None,
+    run_as_job: bool = True,
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
 ) -> Dict[str, Any]:
     """
@@ -1758,15 +2004,22 @@ async def run_post_module(
     Args:
         module_name: Name/path of the post module (e.g., 'windows/gather/enum_shares').
         session_id: The ID of the target session.
-        options: Dictionary of module options. 'SESSION' will be added automatically.
-        run_as_job: If False (default), run sync via console. If True, run async via RPC.
+        options: Dictionary of module options (e.g., {'VERBOSE': True})
+                or string format "VERBOSE=true". 'SESSION' will be added automatically.
+        run_as_job: If False, run sync via console. If True, run async via RPC.
         timeout_seconds: Max time for synchronous run via console.
 
     Returns:
         Dictionary with execution results or error details.
     """
     logger.info(f"Request to run post module {module_name} on session {session_id}. Job: {run_as_job}")
-    module_options = options or {}
+    
+    # Parse options gracefully (handles both dict and string formats)
+    try:
+        module_options = _parse_options_gracefully(options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid options format: {e}"}
+    
     module_options['SESSION'] = session_id # Ensure SESSION is always set
 
     # Add basic session validation before running
@@ -1782,27 +2035,31 @@ async def run_post_module(
         return {"status": "error", "message": f"Error validating session {session_id}: {e}", "module": module_name}
 
 
-    if run_as_job:
-        return await _execute_module_rpc(
-            module_type='post',
-            module_name=module_name,
-            module_options=module_options
-            # No payload for post modules
-        )
-    else:
-        return await _execute_module_console(
-            module_type='post',
-            module_name=module_name,
-            module_options=module_options,
-            command='run',
-            timeout=timeout_seconds
-        )
+    try:
+        if run_as_job:
+            return await _execute_module_rpc(
+                module_type='post',
+                module_name=module_name,
+                module_options=module_options
+                # No payload for post modules
+            )
+        else:
+            return await _execute_module_console(
+                module_type='post',
+                module_name=module_name,
+                module_options=module_options,
+                command='run',
+                timeout=timeout_seconds
+            )
+    except InvalidModuleError as e:
+        logger.warning(f"Post module '{module_name}' not found: {e}")
+        return {"status": "error", "message": str(e)}
 
 @mcp.tool()
 async def run_auxiliary_module(
     module_name: str,
-    options: Dict[str, Any],
-    run_as_job: bool = False, # Default False for scanners often makes sense
+    options: Union[Dict[str, Any], str],
+    run_as_job: bool = True, # Default False for scanners often makes sense
     check_target: bool = False, # Add check option similar to exploit
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
 ) -> Dict[str, Any]:
@@ -1811,8 +2068,9 @@ async def run_auxiliary_module(
 
     Args:
         module_name: Name/path of the auxiliary module (e.g., 'scanner/ssh/ssh_login').
-        options: Dictionary of module options (e.g., {'RHOSTS': ..., 'USERNAME': ...}).
-        run_as_job: If False (default), run sync via console. If True, run async via RPC.
+        options: Dictionary of module options (e.g., {'RHOSTS': ..., 'USERNAME': ...})
+                or string format "RHOSTS=192.168.1.1,USERNAME=admin". Prefer dict format.
+        run_as_job: If False, run sync via console. If True, run async via RPC.
         check_target: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console.
 
@@ -1820,7 +2078,12 @@ async def run_auxiliary_module(
         Dictionary with execution results or error details.
     """
     logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}, Check: {check_target}")
-    module_options = options or {}
+    
+    # Parse options gracefully (handles both dict and string formats)
+    try:
+        module_options = _parse_options_gracefully(options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid options format: {e}"}
 
     if check_target:
         logger.info(f"Performing check first for auxiliary module {module_name}...")
@@ -1829,7 +2092,7 @@ async def run_auxiliary_module(
              check_result = await _execute_module_console(
                  module_type='auxiliary',
                  module_name=module_name,
-                 module_options=options,
+                 module_options=module_options,
                  command='check',
                  timeout=timeout_seconds
              )
@@ -1850,21 +2113,25 @@ async def run_auxiliary_module(
         except Exception as chk_e:
              logger.warning(f"Check failed for auxiliary {module_name}: {chk_e}. Proceeding with run attempt.")
 
-    if run_as_job:
-        return await _execute_module_rpc(
-            module_type='auxiliary',
-            module_name=module_name,
-            module_options=module_options
-            # No payload for aux modules
-        )
-    else:
-        return await _execute_module_console(
-            module_type='auxiliary',
-            module_name=module_name,
-            module_options=module_options,
-            command='run',
-            timeout=timeout_seconds
-        )
+    try:
+        if run_as_job:
+            return await _execute_module_rpc(
+                module_type='auxiliary',
+                module_name=module_name,
+                module_options=module_options
+                # No payload for aux modules
+            )
+        else:
+            return await _execute_module_console(
+                module_type='auxiliary',
+                module_name=module_name,
+                module_options=module_options,
+                command='run',
+                timeout=timeout_seconds
+            )
+    except InvalidModuleError as e:
+        logger.warning(f"Auxiliary module '{module_name}' not found: {e}")
+        return {"status": "error", "message": str(e)}
 
 @mcp.tool()
 async def list_active_sessions() -> Dict[str, Any]:
@@ -1985,9 +2252,13 @@ async def send_session_command(
                 if command == "shell":
                     if session_shell_type[session_id_str] == 'meterpreter':
                         logger.info(f"Switching session {session_id} from meterpreter to shell mode")
-                        output = session.run_with_output(command, end_strs=['created.'])
+                        # Wrap blocking calls in asyncio.to_thread with timeout to prevent event loop blocking
+                        output = await asyncio.wait_for(
+                            asyncio.to_thread(lambda: session.run_with_output(command, end_strs=['created.'])),
+                            timeout=timeout_seconds
+                        )
                         session_shell_type[session_id_str] = 'shell'
-                        session.read()  # Clear buffer
+                        await asyncio.to_thread(lambda: session.read())  # Clear buffer
                         logger.info(f"Session {session_id} successfully switched to shell mode")
                     else:
                         output = "You are already in shell mode."
@@ -1998,8 +2269,15 @@ async def send_session_command(
                         logger.debug(f"Session {session_id} already in meterpreter mode")
                     else:
                         logger.info(f"Switching session {session_id} from shell to meterpreter mode")
-                        session.read()  # Clear buffer
-                        session.detach()
+                        # Wrap blocking calls in asyncio.to_thread with timeout to prevent event loop blocking
+                        await asyncio.wait_for(
+                            asyncio.to_thread(lambda: session.read()),  # Clear buffer
+                            timeout=timeout_seconds
+                        )
+                        await asyncio.wait_for(
+                            asyncio.to_thread(lambda: session.detach()),
+                            timeout=timeout_seconds
+                        )
                         session_shell_type[session_id_str] = 'meterpreter'
                         logger.info(f"Session {session_id} successfully switched to meterpreter mode")
                 else:
@@ -2323,12 +2601,16 @@ async def start_listener(
     payload_spec = {"name": payload_type, "options": payload_options}
 
     # Use the RPC helper to start the handler job
-    result = await _execute_module_rpc(
-        module_type='exploit',
-        module_name='multi/handler', # Use base name for helper
-        module_options=module_options,
-        payload_spec=payload_spec
-    )
+    try:
+        result = await _execute_module_rpc(
+            module_type='exploit',
+            module_name='multi/handler', # Use base name for helper
+            module_options=module_options,
+            payload_spec=payload_spec
+        )
+    except InvalidModuleError as e:
+        logger.warning(f"Payload '{payload_type}' not found for listener: {e}")
+        return {"status": "error", "message": str(e)}
 
     # Rename status/message slightly for clarity
     if result.get("status") == "success":
@@ -2850,6 +3132,10 @@ if __name__ == "__main__":
         logger.critical(f"CRITICAL: Failed to initialize Metasploit client on startup: {e}. Server cannot function.")
         sys.exit(1) # Exit if MSF connection fails at start
 
+    # Configure event loop debugging if enabled via environment variables
+    # Set ASYNCIO_DEBUG=true and/or EVENT_LOOP_WATCHDOG=true to enable
+    configure_event_loop_debugging()
+
     # --- Setup argument parser for transport mode and server configuration ---
     import argparse
     
@@ -2873,6 +3159,9 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception("Error during MCP stdio run loop.")
             sys.exit(1)
+        finally:
+            # Clean up event loop monitoring
+            stop_event_loop_monitoring()
         logger.info("MCP stdio server finished.")
     else:  # HTTP mode (default)
         logger.info("Starting MCP server in HTTP transport mode.")
@@ -2899,3 +3188,6 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception("Error during MCP HTTP server run.")
             sys.exit(1)
+        finally:
+            # Clean up event loop monitoring
+            stop_event_loop_monitoring()
