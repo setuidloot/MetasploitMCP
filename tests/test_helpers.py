@@ -14,7 +14,10 @@ from typing import Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock the dependencies that aren't available in test environment
-sys.modules['uvicorn'] = Mock()
+mock_uvicorn = Mock()
+mock_uvicorn.server = Mock()
+sys.modules['uvicorn'] = mock_uvicorn
+sys.modules['uvicorn.server'] = mock_uvicorn.server
 sys.modules['fastapi'] = Mock()
 sys.modules['mcp.server.fastmcp'] = Mock()
 sys.modules['mcp.server.sse'] = Mock()
@@ -22,6 +25,10 @@ sys.modules['pymetasploit3.msfrpc'] = Mock()
 sys.modules['starlette.applications'] = Mock()
 sys.modules['starlette.routing'] = Mock()
 sys.modules['mcp.server.session'] = Mock()
+# Mock fastmcp before it's imported
+sys.modules['fastmcp'] = Mock()
+sys.modules['fastmcp.client'] = Mock()
+sys.modules['fastmcp.client.transports'] = Mock()
 
 # Create mock classes for MSF objects
 class MockMsfRpcClient:
@@ -476,12 +483,12 @@ class TestRunCommandSafely:
         """Test command execution with read error - should timeout gracefully."""
         mock_console.read.side_effect = Exception("Read failed")
 
-        # Should not raise exception, but timeout and return empty result
+        # Should not raise exception, but timeout and return timeout error message
         result = await run_command_safely(mock_console, 'help')
         
-        # Should return empty string after timeout
+        # Should return timeout error message after timeout
         assert isinstance(result, str)
-        assert result == ""  # Empty result after timeout
+        assert "TIMEOUT_ERROR" in result or "timeout" in result.lower()  # Timeout error message
 
 
 class TestFindAvailablePort:

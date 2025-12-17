@@ -43,7 +43,69 @@ Error: Failed to connect to Metasploit RPC at 127.0.0.1:55553
    export MSF_PASSWORD=yourpassword
    export MSF_SERVER=127.0.0.1
    export MSF_PORT=55553
+   export MSF_RPC_PROTOCOL=msgpack  # Optional: 'msgpack' (default) or 'jsonrpc'
    ```
+
+### RPC Protocol Selection
+
+MetasploitMCP supports both msgpack RPC (default) and JSON-RPC protocols. You can switch between them using the `MSF_RPC_PROTOCOL` environment variable.
+
+**Available Options:**
+- `msgpack` (default): Binary MessagePack serialization - faster and more compact
+- `jsonrpc`: JSON-RPC protocol - human-readable, easier to debug with network tools
+
+**Usage:**
+```bash
+# Use JSON-RPC (useful for debugging network traffic)
+export MSF_RPC_PROTOCOL=jsonrpc
+poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+
+# Use msgpack (default, recommended for production)
+export MSF_RPC_PROTOCOL=msgpack
+# or simply omit the variable
+poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+```
+
+**When to Use JSON-RPC:**
+- Debugging RPC communication issues
+- Inspecting network traffic with tools like Wireshark or tcpdump
+- Integration with systems that prefer JSON over binary protocols
+
+**When to Use msgpack:**
+- Production environments (default)
+- Maximum performance requirements
+- Minimal network bandwidth usage
+
+### JSON-RPC 404 Errors
+
+**Symptom:**
+```
+HTTP Request: POST http://127.0.0.1:55553/api/ "HTTP/1.1 404 18"
+Error: unpack(b) received extra data
+```
+
+**Cause:** Metasploit's msfrpcd uses different endpoints for different protocols:
+- msgpack RPC: `/api/`
+- JSON-RPC: `/api/v1/json-rpc`
+
+The patch automatically sets the correct endpoint, but if you see 404 errors, verify your msfrpcd supports JSON-RPC.
+
+**Solutions:**
+
+1. **Verify msfrpcd JSON-RPC Support:**
+   Check your Metasploit version. JSON-RPC support was added in Metasploit Framework 6.0+.
+
+2. **Use msgpack (Recommended):**
+   ```bash
+   export MSF_RPC_PROTOCOL=msgpack
+   # or simply omit the variable (msgpack is default)
+   ```
+
+3. **Check Server Configuration:**
+   Ensure your msfrpcd instance is running and supports JSON-RPC on `/api/v1/json-rpc`.
+
+4. **Verify Endpoint:**
+   The patch automatically uses `/api/v1/json-rpc` when `MSF_RPC_PROTOCOL=jsonrpc` is set.
 
 ### HTTP 406 "Not Acceptable" Error
 
@@ -298,5 +360,7 @@ If issues persist:
 2. Review the [Development Guide](DEVELOPMENT.md)
 3. Enable verbose/debug logging
 4. Check Metasploit Framework logs
+
+
 
 
