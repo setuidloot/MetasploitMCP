@@ -178,3 +178,5 @@ Fixed blocking calls in Meterpreter session `shell` and `exit` commands. The fol
 
 This prevents the event loop from being blocked when switching between Meterpreter and shell modes.
 
+
+
