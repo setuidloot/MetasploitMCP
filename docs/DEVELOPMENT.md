@@ -69,6 +69,7 @@ poetry run mypy MetasploitMCP.py
 ```
 MetasploitMCP/
 ├── MetasploitMCP.py          # Main server implementation
+├── pymetasploit3_jsonrpc_patch.py  # JSON-RPC monkeypatch for pymetasploit3
 ├── pyproject.toml            # Poetry configuration and dependencies
 ├── conftest.py               # Pytest configuration and fixtures
 ├── run_all_tests.py          # Custom test runner
@@ -76,12 +77,50 @@ MetasploitMCP/
 │   ├── test_helpers.py       # Helper function tests
 │   ├── test_ip_validation.py # IP validation tests
 │   ├── test_options_parsing.py # Options parsing tests
-│   └── test_tools_integration.py # Integration tests
+│   ├── test_tools_integration.py # Integration tests
+│   └── test_jsonrpc_patch.py  # JSON-RPC patch tests
 └── docs/                     # Documentation
     ├── DEVELOPMENT.md        # This file
     ├── POETRY_MIGRATION.md   # Poetry migration guide
     └── API.md                # API documentation
 ```
+
+## JSON-RPC Support
+
+MetasploitMCP includes a monkeypatch module (`pymetasploit3_jsonrpc_patch.py`) that adds JSON-RPC protocol support to pymetasploit3. This allows runtime selection between msgpack RPC (default) and JSON-RPC via the `MSF_RPC_PROTOCOL` environment variable.
+
+### How It Works
+
+The patch intercepts pymetasploit3's serialization/deserialization methods:
+- `pymetasploit3.utils.encode()` - Serializes RPC requests
+- `pymetasploit3.utils.decode()` - Deserializes RPC responses
+- `MsfRpcClient.__init__()` - Sets HTTP Content-Type headers
+- `MsfRpcClient.post_request()` - Ensures correct headers for protocol
+
+### Protocol Selection
+
+```bash
+# Use JSON-RPC
+export MSF_RPC_PROTOCOL=jsonrpc
+
+# Use msgpack (default)
+export MSF_RPC_PROTOCOL=msgpack
+# or omit the variable
+```
+
+### Testing the Patch
+
+```bash
+# Run JSON-RPC patch tests
+poetry run pytest tests/test_jsonrpc_patch.py -v
+
+# Test with JSON-RPC enabled
+MSF_RPC_PROTOCOL=jsonrpc poetry run python MetasploitMCP.py --transport http
+```
+
+### Implementation Details
+
+The patch is automatically applied when the module is imported (if JSON-RPC is enabled). It must be imported before any `MsfRpcClient` instances are created, which is why it's imported early in `MetasploitMCP.py`.
 
 ## Testing Guidelines
 
@@ -113,6 +152,7 @@ MetasploitMCP/
 | `MSF_SERVER` | `127.0.0.1` | Metasploit RPC server address |
 | `MSF_PORT` | `55553` | Metasploit RPC port |
 | `MSF_SSL` | `false` | Enable SSL for Metasploit RPC |
+| `MSF_RPC_PROTOCOL` | `msgpack` | RPC protocol: `msgpack` (default) or `jsonrpc` |
 | `PAYLOAD_SAVE_DIR` | `~/payloads` | Directory to save generated payloads |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 

@@ -70,7 +70,12 @@ export MSF_PASSWORD=yourpassword
 export MSF_SERVER=127.0.0.1
 export MSF_PORT=55553
 export PAYLOAD_SAVE_DIR=/path/to/save/payloads
+export MSF_RPC_PROTOCOL=msgpack  # Options: 'msgpack' (default) or 'jsonrpc'
 ```
+
+**RPC Protocol Options:**
+- `msgpack` (default): Uses MessagePack binary serialization (faster, more compact)
+- `jsonrpc`: Uses JSON-RPC protocol (human-readable, easier to debug)
 
 ### 4. Run the Server
 
