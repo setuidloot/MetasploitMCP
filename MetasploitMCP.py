@@ -16,6 +16,20 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # --- Third-party Libraries ---
 from fastmcp import FastMCP, Context
+
+if os.getenv('MSF_RPC_PROTOCOL', 'msgpack').lower() == 'jsonrpc':
+    # Apply JSON-RPC monkeypatch BEFORE importing pymetasploit3 classes
+    import pymetasploit3_jsonrpc_patch  # noqa: F401
+
+    # Import pymetasploit3 modules
+    import pymetasploit3.utils
+    import pymetasploit3.msfrpc
+
+    # Apply patch by passing the modules directly
+    if pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled():
+        pymetasploit3_jsonrpc_patch.apply_patch(pymetasploit3.utils, pymetasploit3.msfrpc)
+
+# Now import the classes - they will use the patched methods
 from pymetasploit3.msfrpc import MsfConsole, MsfRpcClient, MsfRpcError
 
 # --- Event Loop Monitoring ---
@@ -54,6 +68,9 @@ MSF_PORT_STR = os.getenv('MSF_PORT', '55553')
 MSF_SSL_STR = os.getenv('MSF_SSL', 'false')
 PAYLOAD_SAVE_DIR = os.environ.get('PAYLOAD_SAVE_DIR', str(pathlib.Path.home() / "payloads"))
 
+# Metasploit module documentation path (populated in Docker image via sparse checkout)
+MSF_DOCS_PATH = os.environ.get('MSF_DOCS_PATH', '/opt/metasploit-docs/modules')
+
 # Timeouts and Polling Intervals (in seconds)
 DEFAULT_CONSOLE_READ_TIMEOUT = 15  # Default for quick console commands
 LONG_CONSOLE_READ_TIMEOUT = 60   # For commands like run/exploit/check
@@ -61,11 +78,14 @@ SESSION_COMMAND_TIMEOUT = 15     # Default for commands within sessions
 SESSION_READ_INACTIVITY_TIMEOUT = 15 # Timeout if no data from session
 EXPLOIT_SESSION_POLL_TIMEOUT = 120 # Max time to wait for session after exploit job
 EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
+MODULE_RESULT_POLL_TIMEOUT = 300   # Max time to wait for auxiliary/post module completion
+MODULE_RESULT_POLL_INTERVAL = 2    # How often to check module.running_stats
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
 SHELL_PROMPT_RE = re.compile(r'([#$>]|%)\s*$') # Matches common shell prompts (#, $, >, %) at end of line
+MODULE_COMPLETE_RE = re.compile(rb'.*module execution completed$', re.DOTALL | re.MULTILINE)
 
 # --- Metasploit Client Setup ---
 
@@ -85,6 +105,10 @@ def initialize_msf_client() -> MsfRpcClient:
         return _msf_client_instance
 
     logger.info("Attempting to initialize Metasploit RPC client...")
+    
+    # Log RPC protocol being used
+    rpc_protocol = os.getenv('MSF_RPC_PROTOCOL', 'msgpack').lower()
+    logger.info(f"Using RPC protocol: {rpc_protocol}")
 
     try:
         msf_port = int(MSF_PORT_STR)
@@ -94,7 +118,7 @@ def initialize_msf_client() -> MsfRpcClient:
         raise ValueError("Invalid MSF connection parameters") from e
 
     try:
-        logger.debug(f"Attempting to create MsfRpcClient connection to {MSF_SERVER}:{msf_port} (SSL: {msf_ssl})...")
+        logger.debug(f"Attempting to create MsfRpcClient connection to {MSF_SERVER}:{msf_port} (SSL: {msf_ssl}, Protocol: {rpc_protocol})...")
         client = MsfRpcClient(
             password=MSF_PASSWORD,
             server=MSF_SERVER,
@@ -399,6 +423,10 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
                      logger.info(f"Detected MSF prompt at end of buffer for '{cmd}' after {elapsed_time:.1f}s. Command complete.")
                      break
 
+                if MODULE_COMPLETE_RE.match(output_buffer):
+                     logger.info(f"Detected module complete in output buffer for '{cmd}' after {elapsed_time:.1f}s. Command complete.")
+                     break
+
             # Fallback Completion Check: Inactivity timeout
             elif (current_time - last_data_time) > SESSION_READ_INACTIVITY_TIMEOUT:
                 inactivity_duration = current_time - last_data_time
@@ -700,20 +728,7 @@ async def _get_module_object(module_type: str, module_name: str) -> Any:
     
     if '/' in module_name:
         parts = module_name.split('/')
-        
-        # Check for Fetch Payloads (cmd/) - cannot be loaded via RPC API
-        if module_type == 'payload' and (parts[0] == 'cmd' or (parts[0] == 'payload' and len(parts) > 1 and parts[1] == 'cmd')):
-            # Extract actual payload name for error message
-            if parts[0] == 'payload':
-                fetch_payload_name = '/'.join(parts[1:])  # Remove 'payload/' prefix
-            else:
-                fetch_payload_name = module_name
-            logger.error(f"Attempted to load Fetch Payload '{fetch_payload_name}' via RPC - not supported")
-            raise ValueError(
-                f"Cannot load Fetch Payload '{fetch_payload_name}' via RPC API. "
-                f"Fetch Payloads (cmd/*) use command stagers and require console execution. "
-                f"To use this payload, call run_exploit() with run_as_job=False to use console-based execution instead of RPC."
-            )
+
         
         if parts[0] in ('exploit', 'payload', 'post', 'auxiliary', 'encoder', 'nop'):
              # Looks like full path, extract base name
@@ -1103,6 +1118,71 @@ async def _execute_module_rpc(
         elif is_handler_module:
              logger.info(f"Handler job {job_id} started successfully. No session polling needed - handler will wait for connections.")
 
+        # --- Auxiliary/Post Module: Poll for Completion and Retrieve Results ---
+        module_result = None
+        module_result_status = None
+        if module_type in ('auxiliary', 'post') and uuid:
+            start_time = asyncio.get_event_loop().time()
+            logger.info(f"{module_type.capitalize()} job {job_id} (UUID: {uuid}) started. Polling for completion (timeout: {MODULE_RESULT_POLL_TIMEOUT}s)...")
+            poll_count = 0
+            uuid_str = str(uuid)
+            
+            while (asyncio.get_event_loop().time() - start_time) < MODULE_RESULT_POLL_TIMEOUT:
+                poll_count += 1
+                elapsed = asyncio.get_event_loop().time() - start_time
+                
+                # Log progress every few polls to avoid log spam
+                if poll_count % 10 == 0:
+                    logger.info(f"Still polling for {module_type} completion (elapsed: {int(elapsed)}s, checks: {poll_count})")
+                
+                try:
+                    # Check module.running_stats to see if UUID is in results
+                    running_stats = await asyncio.to_thread(lambda: client.call('module.running_stats'))
+                    
+                    if not isinstance(running_stats, dict):
+                        logger.warning(f"Unexpected type from module.running_stats: {type(running_stats)}")
+                        await asyncio.sleep(MODULE_RESULT_POLL_INTERVAL)
+                        continue
+                    
+                    # Check if UUID is in the results array (module completed)
+                    results_list = running_stats.get('results', [])
+                    if uuid_str in results_list:
+                        logger.info(f"{module_type.capitalize()} job {job_id} (UUID: {uuid}) completed after {int(elapsed)}s. Retrieving results...")
+                        
+                        # Retrieve the actual module results
+                        result_response = await asyncio.to_thread(lambda: client.call('module.results', [uuid_str]))
+                        
+                        if isinstance(result_response, dict):
+                            module_result_status = result_response.get('status', 'unknown')
+                            module_result = result_response.get('result')
+                            logger.info(f"Retrieved {module_type} results with status: {module_result_status}")
+                        else:
+                            logger.warning(f"Unexpected type from module.results: {type(result_response)}")
+                            module_result = result_response
+                        
+                        break  # Exit polling loop
+                    
+                    # Check if UUID is still in running or waiting
+                    running_list = running_stats.get('running', [])
+                    waiting_list = running_stats.get('waiting', [])
+                    
+                    if uuid_str not in running_list and uuid_str not in waiting_list and uuid_str not in results_list:
+                        logger.warning(f"UUID {uuid_str} not found in running_stats (running/waiting/results). Module may have failed or UUID changed.")
+                        break
+                    
+                except MsfRpcError as poll_e:
+                    logger.warning(f"Error during {module_type} result polling: {poll_e}")
+                    await asyncio.sleep(MODULE_RESULT_POLL_INTERVAL)
+                    continue
+                except Exception as poll_e:
+                    logger.error(f"Unexpected error during {module_type} result polling: {poll_e}", exc_info=True)
+                    break
+                
+                await asyncio.sleep(MODULE_RESULT_POLL_INTERVAL)
+            
+            if module_result is None and (asyncio.get_event_loop().time() - start_time) >= MODULE_RESULT_POLL_TIMEOUT:
+                logger.warning(f"Polling timeout ({MODULE_RESULT_POLL_TIMEOUT}s) reached for {module_type} job {job_id}, results not retrieved after {poll_count} checks.")
+
         # --- Construct Final Success/Warning Message ---
         message = f"{module_type.capitalize()} module {full_module_path} started as job {job_id}."
         status = "success"
@@ -1115,14 +1195,30 @@ async def _execute_module_rpc(
             else:
                  message += " No session detected within timeout."
                  status = "warning" # Indicate job started but session didn't appear
+        elif module_type in ('auxiliary', 'post'):
+            if module_result is not None:
+                if module_result_status == 'completed':
+                    message += f" Module completed successfully."
+                else:
+                    message += f" Module completed with status: {module_result_status}."
+            else:
+                message += " Module execution started, but results not yet available (may still be running)."
+                status = "warning"  # Indicate results not retrieved
 
-        return {
+        result_dict = {
             "status": status, "message": message, "job_id": job_id, "uuid": uuid,
             "session_id": found_session_id, # None if not found/not applicable
             "module": full_module_path, "options": module_options,
             "payload_name": payload_name_for_log, # Include payload info if exploit
             "payload_options": payload_options_for_log
         }
+        
+        # Add module results for auxiliary/post modules
+        if module_type in ('auxiliary', 'post'):
+            result_dict["module_result_status"] = module_result_status
+            result_dict["module_result"] = module_result
+        
+        return result_dict
 
     except (MsfRpcError, ValueError) as e: # Catch module prep errors too
         error_str = str(e).lower()
@@ -1307,7 +1403,7 @@ async def _execute_module_console(
             
             # Handle timeout case
             if timed_out:
-                if command in ['exploit', 'run']:
+                if command in ['exploit', 'run'] and module_type in ['exploit']:
                     status = "warning"
                     message = f"{module_type.capitalize()} module {full_module_path} timed out after {timeout}s. "
                     if session_id is None:
@@ -1317,13 +1413,13 @@ async def _execute_module_console(
                 else:
                     status = "error"
                     message = f"{module_type.capitalize()} module {full_module_path} timed out after {timeout}s."
-            elif command in ['exploit', 'run'] and session_id is None and \
+            elif command in ['exploit', 'run'] and module_type in ['exploit'] and session_id is None and \
                any(term in module_output.lower() for term in ['session opened', 'sending stage']):
                  message += " Session may have opened but ID detection failed or session closed quickly. Check list_active_sessions() to verify."
                  status = "warning"
-            elif command in ['exploit', 'run'] and session_id is not None:
+            elif command in ['exploit', 'run'] and module_type in ['exploit'] and session_id is not None:
                  message += f" Session {session_id} detected."
-            elif command in ['exploit', 'run'] and session_id is None:
+            elif command in ['exploit', 'run'] and module_type in ['exploit'] and session_id is None:
                  # No session detected and no hints of session activity - this is not truly "success" for an exploit
                  status = "no_session"
                  message = f"{module_type.capitalize()} module {full_module_path} completed but no session was created. " \
@@ -1372,6 +1468,362 @@ async def _execute_module_console(
             return {"status": "error", "message": f"Unexpected server error running {full_module_path} via console: {e}"}
 
 # --- MCP Tool Definitions ---
+
+@mcp.tool()
+async def describe_module(
+    module_name: str,
+    module_type: str = "exploit"
+) -> Dict[str, Any]:
+    """
+    Get detailed information about a Metasploit module BEFORE using it.
+    
+    Call this tool to understand a module's options, requirements, and behavior
+    before attempting to run it. This helps avoid option errors and ensures
+    you use the correct parameters.
+    
+    RECOMMENDED WORKFLOW:
+    1. Call describe_module() to understand available options and requirements
+    2. Call get_module_documentation() for extended usage examples and scenarios
+    3. Call run_exploit/run_auxiliary_module/run_post_module with correct options
+    
+    Args:
+        module_name: Module path (e.g., 'windows/smb/ms17_010_eternalblue' or 
+                    'exploit/windows/smb/ms17_010_eternalblue')
+        module_type: Type of module - 'exploit', 'auxiliary', 'post', or 'payload'
+                    (default: 'exploit')
+    
+    Returns:
+        Dict containing:
+        - name: Human-readable module name
+        - full_path: Full module path (e.g., 'exploit/windows/smb/ms17_010_eternalblue')
+        - description: What the module does
+        - authors: Who wrote the module
+        - references: CVEs, URLs, EDB IDs related to the vulnerability
+        - options: All configurable options with:
+            - type: Option type (string, integer, address, port, path, bool, enum)
+            - required: Whether the option is required
+            - default: Default value if any
+            - description: What the option does
+        - notes: Module metadata including:
+            - stability: How stable the module is (CRASH_SAFE, CRASH_SERVICE_RESTARTS, etc.)
+            - reliability: How reliable (REPEATABLE_SESSION, FIRST_ATTEMPT_FAIL, etc.)
+            - side_effects: What artifacts it leaves (ARTIFACTS_ON_DISK, IOC_IN_LOGS, etc.)
+        - targets: Available targets (for exploits)
+        - platform: Supported platforms
+        - arch: Supported architectures
+        - rank: Module reliability ranking
+        - privileged: Whether it requires privileged access
+        - disclosure_date: When the vulnerability was disclosed
+    """
+    logger.info(f"describe_module called for '{module_type}/{module_name}'")
+    
+    # Normalize module name - strip type prefix if provided
+    base_module_name = module_name
+    if '/' in module_name:
+        parts = module_name.split('/')
+        if parts[0] in ('exploit', 'payload', 'post', 'auxiliary', 'encoder', 'nop'):
+            # User provided full path, extract base name and potentially correct type
+            if parts[0] != module_type:
+                logger.debug(f"Module type from path '{parts[0]}' differs from specified type '{module_type}', using path type")
+                module_type = parts[0]
+            base_module_name = '/'.join(parts[1:])
+    
+    full_module_path = f"{module_type}/{base_module_name}"
+    
+    try:
+        client = get_msf_client()
+        
+        # Get module info via RPC
+        logger.debug(f"Calling module.info for {module_type}/{base_module_name}")
+        module_info = await asyncio.wait_for(
+            asyncio.to_thread(
+                lambda: client.call('module.info', [module_type, base_module_name])
+            ),
+            timeout=RPC_CALL_TIMEOUT
+        )
+        
+        # Check for error response
+        if isinstance(module_info, bool) and not module_info:
+            # Module not found - try to find similar modules
+            suggestions = await _find_similar_modules(module_type, base_module_name)
+            suggestion_text = ""
+            if suggestions:
+                suggestion_text = "Did you mean one of these?\n  - " + "\n  - ".join(suggestions)
+            return {
+                "status": "not_found",
+                "message": f"Module '{full_module_path}' not found in Metasploit.",
+                "suggestions": suggestions,
+                "suggestion_text": suggestion_text
+            }
+        
+        if isinstance(module_info, dict) and module_info.get('error'):
+            error_message = module_info.get('error_message', 'Unknown error')
+            suggestions = await _find_similar_modules(module_type, base_module_name)
+            return {
+                "status": "error",
+                "message": f"Error retrieving module info: {error_message}",
+                "suggestions": suggestions
+            }
+        
+        # Get module options via direct RPC call (returns dict with full option details)
+        # Note: pymetasploit3's module_obj.options returns only a list of option names,
+        # not the full dict, so we use the RPC call directly.
+        try:
+            options_dict = await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: client.call('module.options', [module_type, base_module_name])
+                ),
+                timeout=RPC_CALL_TIMEOUT
+            )
+            logger.debug(f"Retrieved {len(options_dict) if isinstance(options_dict, dict) else 0} options via RPC")
+        except Exception as e:
+            logger.warning(f"Could not get module options via RPC: {e}")
+            options_dict = {}
+        
+        # Parse options into structured format
+        structured_options = {}
+        if not isinstance(options_dict, dict):
+            logger.warning(f"Unexpected options type from RPC: {type(options_dict)}, defaulting to empty dict")
+            options_dict = {}
+        
+        for opt_name, opt_info in options_dict.items():
+            if isinstance(opt_info, dict):
+                structured_options[opt_name] = {
+                    "type": opt_info.get('type', 'string'),
+                    "required": opt_info.get('required', False),
+                    "default": opt_info.get('default'),
+                    "description": opt_info.get('desc', ''),
+                    "enums": opt_info.get('enums', []) if opt_info.get('type') == 'enum' else None
+                }
+                # Remove None values for cleaner output
+                structured_options[opt_name] = {k: v for k, v in structured_options[opt_name].items() if v is not None}
+        
+        # Parse notes if available (stability, reliability, side_effects)
+        notes = {}
+        raw_notes = module_info.get('notes', {})
+        if isinstance(raw_notes, dict):
+            if 'Stability' in raw_notes:
+                notes['stability'] = raw_notes['Stability'] if isinstance(raw_notes['Stability'], list) else [raw_notes['Stability']]
+            if 'Reliability' in raw_notes:
+                notes['reliability'] = raw_notes['Reliability'] if isinstance(raw_notes['Reliability'], list) else [raw_notes['Reliability']]
+            if 'SideEffects' in raw_notes:
+                notes['side_effects'] = raw_notes['SideEffects'] if isinstance(raw_notes['SideEffects'], list) else [raw_notes['SideEffects']]
+        
+        # Parse references
+        references = []
+        raw_refs = module_info.get('references', [])
+        if isinstance(raw_refs, list):
+            for ref in raw_refs:
+                if isinstance(ref, list) and len(ref) >= 2:
+                    references.append({"type": ref[0], "value": ref[1]})
+                elif isinstance(ref, dict):
+                    references.append(ref)
+        
+        # Parse targets (for exploits)
+        targets = []
+        raw_targets = module_info.get('targets', [])
+        if isinstance(raw_targets, list):
+            for idx, target in enumerate(raw_targets):
+                if isinstance(target, list) and len(target) >= 1:
+                    targets.append({"id": idx, "name": target[0]})
+                elif isinstance(target, str):
+                    targets.append({"id": idx, "name": target})
+        
+        # Build response
+        result = {
+            "status": "success",
+            "name": module_info.get('name', base_module_name),
+            "full_path": full_module_path,
+            "description": module_info.get('description', ''),
+            "authors": module_info.get('authors', []),
+            "references": references,
+            "options": structured_options,
+            "notes": notes if notes else None,
+            "targets": targets if targets else None,
+            "platform": module_info.get('platform', []),
+            "arch": module_info.get('arch', []),
+            "rank": module_info.get('rank'),
+            "privileged": module_info.get('privileged', False),
+            "disclosure_date": module_info.get('disclosure_date'),
+            "default_target": module_info.get('default_target')
+        }
+        
+        # Remove None values for cleaner output
+        result = {k: v for k, v in result.items() if v is not None}
+        
+        logger.info(f"Successfully retrieved info for {full_module_path}: {len(structured_options)} options")
+        return result
+        
+    except InvalidModuleError as e:
+        # Clean error for module not found
+        return {
+            "status": "not_found",
+            "message": str(e),
+            "suggestions": []
+        }
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) retrieving module info. Server may be slow."
+        logger.error(error_msg)
+        return {"status": "error", "message": error_msg}
+    except MsfRpcError as e:
+        logger.error(f"Metasploit RPC error in describe_module: {e}")
+        return {"status": "error", "message": f"Metasploit RPC error: {e}"}
+    except Exception as e:
+        logger.exception(f"Unexpected error in describe_module for {full_module_path}")
+        return {"status": "error", "message": f"Unexpected error: {e}"}
+
+
+@mcp.tool()
+async def get_module_documentation(module_name: str) -> Dict[str, Any]:
+    """
+    Retrieve detailed usage documentation for a Metasploit module.
+    
+    This provides extended documentation including usage examples, scenarios,
+    and detailed explanations that complement describe_module(). Documentation
+    is sourced from the official Metasploit Framework documentation.
+    
+    RECOMMENDED WORKFLOW:
+    1. Call describe_module() to understand available options and requirements
+    2. Call get_module_documentation() for extended usage examples and scenarios
+    3. Call run_exploit/run_auxiliary_module/run_post_module with correct options
+    
+    Args:
+        module_name: Full or partial module path (e.g., 'exploit/windows/smb/ms17_010_eternalblue'
+                    or 'windows/smb/ms17_010_eternalblue')
+    
+    Returns:
+        Dict containing:
+        - status: 'success', 'not_found', or 'not_available'
+        - documentation: Markdown content with usage examples and scenarios (if found)
+        - suggestions: Alternative module documentation paths if exact match not found
+        - message: Informational or error message
+    """
+    logger.info(f"get_module_documentation called for '{module_name}'")
+    
+    # Check if documentation directory exists
+    docs_path = pathlib.Path(MSF_DOCS_PATH)
+    if not docs_path.exists():
+        logger.warning(f"Metasploit documentation directory not found at {MSF_DOCS_PATH}")
+        return {
+            "status": "not_available",
+            "message": f"Module documentation is not installed. "
+                      f"Documentation is available in the Docker container at {MSF_DOCS_PATH}. "
+                      f"Use describe_module() for live module information from Metasploit RPC instead.",
+            "documentation": None
+        }
+    
+    # Normalize module path - handle various input formats
+    # e.g., "exploit/windows/smb/ms17_010_eternalblue" -> "exploit/windows/smb/ms17_010_eternalblue"
+    # e.g., "windows/smb/ms17_010_eternalblue" -> try to find it in any type folder
+    normalized_name = module_name.strip().strip('/')
+    
+    # Check if type prefix is present
+    type_prefixes = ['exploit', 'auxiliary', 'post', 'payload', 'encoder', 'nop']
+    has_type_prefix = any(normalized_name.startswith(f"{prefix}/") for prefix in type_prefixes)
+    
+    # Build potential documentation file paths
+    potential_paths = []
+    if has_type_prefix:
+        # Direct path with type prefix
+        doc_file = docs_path / f"{normalized_name}.md"
+        potential_paths.append(doc_file)
+    else:
+        # Try all type prefixes
+        for prefix in type_prefixes:
+            doc_file = docs_path / prefix / f"{normalized_name}.md"
+            potential_paths.append(doc_file)
+    
+    # Try to find and read the documentation
+    for doc_file in potential_paths:
+        if doc_file.exists():
+            try:
+                content = doc_file.read_text(encoding='utf-8')
+                logger.info(f"Found documentation at {doc_file}")
+                return {
+                    "status": "success",
+                    "documentation": content,
+                    "path": str(doc_file.relative_to(docs_path)),
+                    "message": f"Documentation found for {module_name}"
+                }
+            except Exception as e:
+                logger.error(f"Error reading documentation file {doc_file}: {e}")
+                return {
+                    "status": "error",
+                    "message": f"Error reading documentation: {e}",
+                    "documentation": None
+                }
+    
+    # Documentation not found - try to find similar documentation files
+    logger.info(f"Documentation not found for {module_name}, searching for alternatives...")
+    suggestions = await _find_similar_documentation_files(docs_path, normalized_name)
+    
+    suggestion_text = ""
+    if suggestions:
+        suggestion_text = "Similar documentation files found:\n  - " + "\n  - ".join(suggestions[:5])
+    
+    return {
+        "status": "not_found",
+        "message": f"No documentation found for '{module_name}'. "
+                  f"Note: Not all modules have documentation. "
+                  f"Use describe_module() for live module information from Metasploit RPC.",
+        "suggestions": suggestions[:5] if suggestions else [],
+        "suggestion_text": suggestion_text,
+        "documentation": None
+    }
+
+
+async def _find_similar_documentation_files(docs_path: pathlib.Path, module_name: str, max_suggestions: int = 5) -> List[str]:
+    """
+    Find similar documentation files based on module name keywords.
+    
+    Args:
+        docs_path: Path to the documentation directory
+        module_name: The module name to search for
+        max_suggestions: Maximum number of suggestions to return
+    
+    Returns:
+        List of similar documentation file paths (relative to docs_path)
+    """
+    try:
+        # Extract search terms from the module name
+        parts = module_name.replace('_', '/').replace('-', '/').split('/')
+        # Filter out common/generic terms and keep meaningful ones
+        generic_terms = {'exploit', 'payload', 'auxiliary', 'post', 'scanner', 'admin', 
+                        'multi', 'generic', 'cmd', 'x86', 'x64', 'linux', 'windows', 
+                        'unix', 'osx', 'freebsd', 'solaris', 'reverse', 'bind', 'staged', 
+                        'stageless', 'http', 'https', 'tcp', 'udp', 'modules'}
+        search_terms = [p.lower() for p in parts if len(p) > 2 and p.lower() not in generic_terms]
+        
+        if not search_terms:
+            # Fall back to the last part of the path
+            search_terms = [parts[-1].lower()] if parts else []
+        
+        if not search_terms:
+            return []
+        
+        # Find all markdown files in the docs directory
+        md_files = []
+        for md_file in docs_path.rglob("*.md"):
+            rel_path = str(md_file.relative_to(docs_path))
+            md_files.append(rel_path)
+        
+        # Score files by how many search terms they match
+        scored_files = []
+        for file_path in md_files:
+            file_lower = file_path.lower()
+            # Count matching terms
+            matches = sum(1 for term in search_terms if term in file_lower)
+            if matches > 0:
+                scored_files.append((matches, file_path))
+        
+        # Sort by score (descending) and return top suggestions
+        scored_files.sort(key=lambda x: (-x[0], x[1]))
+        return [f for _, f in scored_files[:max_suggestions]]
+        
+    except Exception as e:
+        logger.error(f"Error finding similar documentation files: {e}")
+        return []
+
 
 @mcp.tool()
 async def list_exploits(search_term: str = "") -> List[str]:
@@ -1459,9 +1911,9 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 
                 # Get compatible payloads using MSF RPC API
                 # The module.compatible_payloads method returns payloads compatible with the exploit
-                logger.debug(f"Calling module.compatible_payloads for {exploit_module} with {RPC_CALL_TIMEOUT}s timeout...")
+                logger.debug(f"Calling module.payloads for {exploit_module} with {RPC_CALL_TIMEOUT}s timeout...")
                 compatible = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: module_obj.compatible_payloads),
+                    asyncio.to_thread(lambda: module_obj.payloads),
                     timeout=RPC_CALL_TIMEOUT
                 )
                 logger.debug(f"Retrieved {len(compatible)} compatible payloads for {exploit_module}.")
@@ -1473,20 +1925,6 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 # Module not found
                 logger.warning(f"Exploit module '{exploit_module}' not found: {ve}")
                 return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
-            except AttributeError:
-                # If compatible_payloads doesn't exist via RPC, try console method
-                logger.warning(f"Module object for '{exploit_module}' doesn't support compatible_payloads via RPC. Trying console method...")
-                try:
-                    console_payloads = await _get_compatible_payloads_console(exploit_module)
-                    if console_payloads and not console_payloads[0].startswith("Error:"):
-                        logger.info(f"Successfully retrieved {len(console_payloads)} compatible payloads via console for {exploit_module}")
-                        filtered = console_payloads
-                    else:
-                        logger.error(f"Console method also failed for '{exploit_module}'")
-                        return [f"Error: Could not retrieve compatible payloads for exploit module '{exploit_module}'. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
-                except Exception as console_err:
-                    logger.error(f"Console fallback failed: {console_err}")
-                    return [f"Error: Could not retrieve compatible payloads for exploit module '{exploit_module}'. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."]
         else:
             # Add timeout to prevent hanging on slow/unresponsive MSF server
             logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
@@ -1518,40 +1956,13 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                 # Simple substring match
                 filtered = [p for p in filtered if search_lower in p.lower()]
 
-        # Filter out 'cmd/' Fetch Payloads by default unless explicitly requested
-        # These use command stagers (CURL, TFTP, CERTUTIL) and can't be loaded via RPC API
-        # Users can still use them by providing the name directly with run_as_job=False
-        cleaned_payloads = []
-        filtered_count = 0
-        for payload in filtered:
-            if payload.startswith('cmd/'):
-                if include_fetch_payloads:
-                    logger.debug(f"Including Fetch Payload (requires console execution): '{payload}'")
-                    # Add payload/ prefix to match msfconsole format
-                    cleaned_payloads.append(f"payload/{payload}")
-                else:
-                    logger.debug(f"Filtering out Fetch Payload (requires console execution): '{payload}'")
-                    filtered_count += 1
-                    continue  # Skip cmd/ payloads from list by default
-            else:
-                # Add payload/ prefix to match msfconsole format (e.g., payload/linux/x64/meterpreter/reverse_tcp)
-                cleaned_payloads.append(f"payload/{payload}")
         
-        if filtered_count > 0:
-            logger.info(f"Filtered out {filtered_count} Fetch Payloads (cmd/*). Set include_fetch_payloads=True to see them.")
-        
-        count = len(cleaned_payloads)
+        payloads = filtered
+        count = len(payloads)
         limit = 100
         logger.info(f"Found {count} payloads matching filters. Returning max {limit}.")
         
-        # DEBUG: Log the actual return value for debugging "Tool executed successfully" issue
-        result = cleaned_payloads[:limit]
-        logger.info(f"🔍 DEBUG list_payloads: Returning {len(result)} items")
-        if result:
-            logger.info(f"🔍 DEBUG list_payloads: First 3 items: {result[:3]}")
-            logger.info(f"🔍 DEBUG list_payloads: Return type: {type(result)}, item type: {type(result[0]) if result else 'N/A'}")
-        else:
-            logger.warning(f"🔍 DEBUG list_payloads: Returning EMPTY list!")
+        result = payloads[:limit]
         
         return result
     except asyncio.TimeoutError:
@@ -1886,23 +2297,23 @@ async def run_exploit(
             logger.debug(f"Normalized payload name: '{payload_name}' -> '{normalized_payload}'")
         
         # Detect Fetch Payloads (cmd/) and guide user to console execution
-        if normalized_payload.startswith('cmd/') and run_as_job:
-            logger.warning(f"Fetch Payload '{normalized_payload}' detected with run_as_job=True. Fetch Payloads require console execution.")
-            return {
-                "status": "error",
-                "message": (
-                    f"Fetch Payload '{payload_name}' cannot be used with run_as_job=True. "
-                    f"Fetch Payloads (cmd/*) use command stagers (like CURL, TFTP, CERTUTIL) and require console-based execution. "
-                    f"\n\nTo use this payload, set run_as_job=False in your request. Example:\n"
-                    f"run_exploit(\n"
-                    f"    module_name='{module_name}',\n"
-                    f"    payload_name='{payload_name}',\n"
-                    f"    run_as_job=False,  # Required for Fetch Payloads\n"
-                    f"    ...\n"
-                    f")\n\n"
-                    f"Alternatively, use a standard payload like 'payload/{normalized_payload.replace('cmd/', '').split('/')[0]}/x64/meterpreter/reverse_tcp'"
-                )
-            }
+        # if normalized_payload.startswith('cmd/') and run_as_job:
+        #     logger.warning(f"Fetch Payload '{normalized_payload}' detected with run_as_job=True. Fetch Payloads require console execution.")
+        #     return {
+        #         "status": "error",
+        #         "message": (
+        #             f"Fetch Payload '{payload_name}' cannot be used with run_as_job=True. "
+        #             f"Fetch Payloads (cmd/*) use command stagers (like CURL, TFTP, CERTUTIL) and require console-based execution. "
+        #             f"\n\nTo use this payload, set run_as_job=False in your request. Example:\n"
+        #             f"run_exploit(\n"
+        #             f"    module_name='{module_name}',\n"
+        #             f"    payload_name='{payload_name}',\n"
+        #             f"    run_as_job=False,  # Required for Fetch Payloads\n"
+        #             f"    ...\n"
+        #             f")\n\n"
+        #             f"Alternatively, use a standard payload like 'payload/{normalized_payload.replace('cmd/', '').split('/')[0]}/x64/meterpreter/reverse_tcp'"
+        #         )
+        #     }
         
         # Use normalized payload name (without payload/ prefix) for spec
         payload_name = normalized_payload
@@ -2060,7 +2471,6 @@ async def run_auxiliary_module(
     module_name: str,
     options: Union[Dict[str, Any], str],
     run_as_job: bool = True, # Default False for scanners often makes sense
-    check_target: bool = False, # Add check option similar to exploit
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
 ) -> Dict[str, Any]:
     """
@@ -2071,13 +2481,12 @@ async def run_auxiliary_module(
         options: Dictionary of module options (e.g., {'RHOSTS': ..., 'USERNAME': ...})
                 or string format "RHOSTS=192.168.1.1,USERNAME=admin". Prefer dict format.
         run_as_job: If False, run sync via console. If True, run async via RPC.
-        check_target: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console.
 
     Returns:
         Dictionary with execution results or error details.
     """
-    logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}, Check: {check_target}")
+    logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}")
     
     # Parse options gracefully (handles both dict and string formats)
     try:
@@ -2085,33 +2494,6 @@ async def run_auxiliary_module(
     except ValueError as e:
         return {"status": "error", "message": f"Invalid options format: {e}"}
 
-    if check_target:
-        logger.info(f"Performing check first for auxiliary module {module_name}...")
-        try:
-             # Use the console helper for 'check'
-             check_result = await _execute_module_console(
-                 module_type='auxiliary',
-                 module_name=module_name,
-                 module_options=module_options,
-                 command='check',
-                 timeout=timeout_seconds
-             )
-             logger.info(f"Auxiliary check result: {check_result.get('status')} - {check_result.get('message')}")
-             output = check_result.get("module_output", "").lower()
-             # Generic check for positive outcome (aux check output varies widely)
-             is_positive = "host is likely vulnerable" in output or "target appears reachable" in output or "+ check" in output
-             is_negative = "host is not vulnerable" in output or "target is not reachable" in output or "check failed" in output
-
-             if is_negative or (not is_positive and check_result.get("status") == "error"):
-                 logger.warning(f"Check indicates target may not be suitable for {module_name}.")
-                 return {"status": "aborted", "message": f"Check indicates target unsuitable. Module not run.", "check_output": check_result.get("module_output")}
-             elif not is_positive:
-                 logger.warning(f"Check result inconclusive for {module_name}. Proceeding with run.")
-             else:
-                 logger.info(f"Check appears positive for {module_name}. Proceeding.")
-
-        except Exception as chk_e:
-             logger.warning(f"Check failed for auxiliary {module_name}: {chk_e}. Proceeding with run attempt.")
 
     try:
         if run_as_job:
