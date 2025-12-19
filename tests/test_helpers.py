@@ -61,7 +61,8 @@ sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 from MetasploitMCP import (
     _get_module_object, _set_module_options, initialize_msf_client, 
     get_msf_client, get_msf_console, run_command_safely,
-    find_available_port, InvalidModuleError, _find_similar_modules
+    find_available_port, InvalidModuleError, _find_similar_modules,
+    IS_VULNERABLE_RE, IS_NOT_VULNERABLE_RE, SESSION_OPENED_RE, FAILED_TO_LOAD_MODULE_RE
 )
 
 
@@ -489,6 +490,69 @@ class TestRunCommandSafely:
         # Should return timeout error message after timeout
         assert isinstance(result, str)
         assert "TIMEOUT_ERROR" in result or "timeout" in result.lower()  # Timeout error message
+
+    @pytest.mark.asyncio
+    async def test_run_command_safely_with_exit_terms(self, mock_console):
+        """Test run_command_safely with exit_terms_regexes parameter."""
+        # Simulate console that returns vulnerability message then goes idle
+        read_calls = 0
+        def mock_read_side_effect():
+            nonlocal read_calls
+            read_calls += 1
+            if read_calls == 1:
+                return {
+                    'data': 'The target appears vulnerable\n',
+                    'prompt': '',
+                    'busy': False
+                }
+            elif read_calls <= 5:
+                # Simulate idle period (no new data)
+                return {
+                    'data': '',
+                    'prompt': '',
+                    'busy': False
+                }
+            else:
+                # Return prompt after idle period
+                return {
+                    'data': '',
+                    'prompt': '\x01\x02msf6\x01\x02 \x01\x02> \x01\x02',
+                    'busy': False
+                }
+        
+        mock_console.read.side_effect = mock_read_side_effect
+        
+        # Test with exit terms
+        result = await run_command_safely(
+            mock_console,
+            'check',
+            exit_terms_regexes=[IS_VULNERABLE_RE]
+        )
+        
+        # Should return output containing vulnerability message
+        assert 'appears vulnerable' in result.lower()
+        # Should exit early (not wait for full timeout) - idle timeout is 2s, check interval is 0.1s
+        assert read_calls <= 25  # Should exit early after idle period
+
+    @pytest.mark.asyncio
+    async def test_run_command_safely_set_command_skips_wait(self, mock_console):
+        """Test that 'set' commands skip output wait."""
+        result = await run_command_safely(mock_console, 'set RHOSTS 192.168.1.1')
+        
+        # Should return empty string immediately
+        assert result == ""
+        # Should not call read
+        assert not mock_console.read.called
+
+    @pytest.mark.asyncio
+    async def test_run_command_safely_use_command_skips_wait(self, mock_console):
+        """Test that 'use' commands skip output wait."""
+        result = await run_command_safely(mock_console, 'use exploit/test/module')
+        
+        # Should return empty string immediately
+        assert result == ""
+        # Should not call read
+        assert not mock_console.read.called
 
 
 class TestFindAvailablePort:

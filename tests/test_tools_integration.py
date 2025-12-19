@@ -8,6 +8,7 @@ import pytest
 import sys
 import os
 import asyncio
+import re
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
@@ -512,6 +513,106 @@ class TestExploitExecution:
         assert "list_payloads" in result["message"]
         assert "exploit_module" in result["message"]
         assert "ms17_010_eternalblue" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_run_exploit_module_validation(self, mock_asyncio_to_thread):
+        """Test that run_exploit validates module exists before execution."""
+        from MetasploitMCP import InvalidModuleError, _get_module_object
+        
+        client = MockMsfRpcClient()
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object') as mock_get_module:
+                # Simulate module not found
+                mock_get_module.side_effect = InvalidModuleError(
+                    module_type='exploit',
+                    module_name='nonexistent/module',
+                    message="Module 'exploit/nonexistent/module' not found."
+                )
+                
+                result = await run_exploit(
+                    module_name="nonexistent/module",
+                    options={"RHOSTS": "192.168.1.1"},
+                    payload_name="windows/meterpreter/reverse_tcp",
+                    payload_options={"LHOST": "192.168.1.100", "LPORT": 4444},
+                    run_as_job=True
+                )
+        
+        assert result["status"] == "error"
+        assert "not found" in result["message"]
+        # Should not have attempted execution
+        mock_get_module.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_exploit_failed_to_load_module_detection_check(self, mock_asyncio_to_thread):
+        """Test that 'Failed to load module' is detected during vulnerability check."""
+        from MetasploitMCP import FAILED_TO_LOAD_MODULE_RE
+        
+        client = MockMsfRpcClient()
+        mock_module = MockMsfModule('exploit/multi/http/cups_ipp_remote_code_execution')
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                with patch('MetasploitMCP.check_port_available', return_value=(True, None)):
+                    with patch('MetasploitMCP._execute_module_console') as mock_console:
+                        # Simulate "Failed to load module" in check output
+                        mock_console.return_value = {
+                            "status": "error",
+                            "message": "Module 'exploit/multi/http/cups_ipp_remote_code_execution' failed to load.",
+                            "module_output": "[-] No results from search\n[-] Failed to load module: exploit/multi/http/cups_ipp_remote_code_execution\nRHOSTS => 10.77.0.191\nRPORT => 631\n[-] Unknown command: check. Run the help command for more details.\n",
+                            "module": "exploit/multi/http/cups_ipp_remote_code_execution"
+                        }
+                        
+                        result = await run_exploit(
+                            module_name="multi/http/cups_ipp_remote_code_execution",
+                            options={"RHOSTS": "10.77.0.191", "RPORT": 631},
+                            payload_name="cmd/unix/reverse_bash",
+                            payload_options={"LHOST": "10.77.0.1", "LPORT": 4474},
+                            run_as_job=False,
+                            check_vulnerability=True
+                        )
+        
+        assert result["status"] == "error"
+        assert "failed to load" in result["message"].lower()
+        # Verify exit terms included FAILED_TO_LOAD_MODULE_RE
+        call_args = mock_console.call_args
+        exit_terms = call_args.kwargs.get('exit_terms_regexes', [])
+        assert any(regex == FAILED_TO_LOAD_MODULE_RE for regex in exit_terms)
+
+    @pytest.mark.asyncio
+    async def test_run_exploit_failed_to_load_module_detection_exploit(self, mock_asyncio_to_thread):
+        """Test that 'Failed to load module' is detected during exploit execution."""
+        from MetasploitMCP import FAILED_TO_LOAD_MODULE_RE
+        
+        client = MockMsfRpcClient()
+        mock_module = MockMsfModule('exploit/multi/http/cups_ipp_remote_code_execution')
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                with patch('MetasploitMCP.check_port_available', return_value=(True, None)):
+                    with patch('MetasploitMCP._execute_module_console') as mock_console:
+                        # Simulate "Failed to load module" in exploit output
+                        mock_console.return_value = {
+                            "status": "error",
+                            "message": "Module 'exploit/multi/http/cups_ipp_remote_code_execution' failed to load.",
+                            "module_output": "[-] Failed to load module: exploit/multi/http/cups_ipp_remote_code_execution\n",
+                            "module": "exploit/multi/http/cups_ipp_remote_code_execution"
+                        }
+                        
+                        result = await run_exploit(
+                            module_name="multi/http/cups_ipp_remote_code_execution",
+                            options={"RHOSTS": "10.77.0.191", "RPORT": 631},
+                            payload_name="cmd/unix/reverse_bash",
+                            payload_options={"LHOST": "10.77.0.1", "LPORT": 4474},
+                            run_as_job=False
+                        )
+        
+        assert result["status"] == "error"
+        assert "failed to load" in result["message"].lower()
+        # Verify exit terms included FAILED_TO_LOAD_MODULE_RE
+        call_args = mock_console.call_args
+        exit_terms = call_args.kwargs.get('exit_terms_regexes', [])
+        assert any(regex == FAILED_TO_LOAD_MODULE_RE for regex in exit_terms)
 
     @pytest.mark.asyncio
     async def test_run_exploit_invalid_payload_error_message_console(self, mock_asyncio_to_thread):
