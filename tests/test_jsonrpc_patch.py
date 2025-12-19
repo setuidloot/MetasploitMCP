@@ -324,3 +324,4 @@ class TestJSONRPCPatch:
         with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
             pymetasploit3_jsonrpc_patch._jsonrpc_decode(invalid_json)
 
+
