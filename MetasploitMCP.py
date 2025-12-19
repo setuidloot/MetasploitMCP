@@ -9,6 +9,7 @@ import pathlib
 import re
 import shlex
 import socket
+import psutil
 import subprocess
 import sys
 from datetime import datetime
@@ -55,7 +56,7 @@ class InvalidModuleError(ValueError):
 # --- Configuration & Constants ---
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "DEBUG").upper(),
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("metasploit_mcp_server")
@@ -86,6 +87,16 @@ RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
 SHELL_PROMPT_RE = re.compile(r'([#$>]|%)\s*$') # Matches common shell prompts (#, $, >, %) at end of line
 MODULE_COMPLETE_RE = re.compile(rb'.*module execution completed$', re.DOTALL | re.MULTILINE)
+
+# Regular Expressions for Vulnerability Detection
+IS_VULNERABLE_RE = re.compile(rb'(?:appears vulnerable|is vulnerable|appears to be vulnerable|\+ vulnerable)', re.IGNORECASE)
+IS_NOT_VULNERABLE_RE = re.compile(rb'(?:does not appear vulnerable|is not vulnerable|target is not vulnerable|check failed)', re.IGNORECASE)
+
+# Regular Expression for Session Detection
+SESSION_OPENED_RE = re.compile(rb'(?:meterpreter|command shell)\s+session\s+\d+\s+opened', re.IGNORECASE)
+
+# Regular Expression for Module Load Failure Detection
+FAILED_TO_LOAD_MODULE_RE = re.compile(rb'\[-\]\s+Failed to load module:', re.IGNORECASE)
 
 # --- Metasploit Client Setup ---
 
@@ -304,7 +315,12 @@ async def get_msf_console() -> MsfConsole:
              logger.warning("Console object created but no valid ID obtained, cannot explicitly destroy.")
         # else: logger.debug("No console ID obtained, skipping destruction.")
 
-async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: Optional[int] = None) -> str:
+async def run_command_safely(
+    console: MsfConsole, 
+    cmd: str, 
+    execution_timeout: Optional[int] = None,
+    exit_terms_regexes: Optional[List[re.Pattern]] = None
+) -> str:
     """
     Safely run a command on a Metasploit console and return the output.
     Relies primarily on detecting the MSF prompt for command completion.
@@ -313,6 +329,9 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         console: The Metasploit console object (MsfConsole).
         cmd: The command to run.
         execution_timeout: Optional specific timeout for this command's execution phase.
+        exit_terms_regexes: Optional list of compiled regex patterns. If provided, after a short
+                           idle period, the output will be checked against these patterns. If any
+                           match, the function will return early.
 
     Returns:
         The command output as a string.
@@ -329,7 +348,7 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         logger.debug(f"Console write completed for '{cmd}' in {write_duration:.3f}s")
 
         # For "set" commands, don't wait for console output as they produce none
-        if cmd.strip().startswith("set "):
+        if cmd.strip().startswith("set ") or cmd.strip().startswith("use "):
             logger.debug(f"Skipping console output wait for 'set' command: {cmd}")
             return ""
 
@@ -340,6 +359,10 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         read_timeout = execution_timeout or (LONG_CONSOLE_READ_TIMEOUT if cmd.strip().startswith(("run", "exploit", "check")) else DEFAULT_CONSOLE_READ_TIMEOUT)
         check_interval = 0.1 # Seconds between reads
         last_data_time = start_time
+        
+        # Exit terms checking: short idle period before checking for exit terms
+        exit_terms_idle_timeout = 2.0  # Wait 2 seconds of inactivity before checking exit terms
+        exit_terms_checked = False  # Track if we've already checked and matched exit terms
 
         # Progress tracking for long-running commands
         progress_interval = 10  # Log progress every 10 seconds
@@ -348,7 +371,8 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
         total_bytes_read = 0
         timed_out = False  # Track if we exit due to timeout
         
-        logger.info(f"Starting console command execution: '{cmd}' (timeout: {read_timeout}s)")
+        logger.info(f"Starting console command execution: '{cmd}' (timeout: {read_timeout}s)"
+                   f"{', with exit terms checking' if exit_terms_regexes else ''}")
         
         while True:
             await asyncio.sleep(check_interval)
@@ -413,6 +437,8 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
                 output_buffer += chunk_data
                 last_data_time = current_time # Reset inactivity timer
 
+                logger.info(f"Collected output: {output_buffer}")
+
                 # Primary Completion Check: Did we receive the prompt?
                 if prompt_bytes and MSF_PROMPT_RE.search(prompt_bytes):
                      logger.info(f"Detected MSF prompt in console.read() result for '{cmd}' after {elapsed_time:.1f}s. Command complete.")
@@ -427,10 +453,25 @@ async def run_command_safely(console: MsfConsole, cmd: str, execution_timeout: O
                      logger.info(f"Detected module complete in output buffer for '{cmd}' after {elapsed_time:.1f}s. Command complete.")
                      break
 
-            # Fallback Completion Check: Inactivity timeout
-            elif (current_time - last_data_time) > SESSION_READ_INACTIVITY_TIMEOUT:
+
+
+            # Check for exit terms after a short idle period (when we have output but no new data)
+            if exit_terms_regexes and not exit_terms_checked and len(output_buffer) > 0 and (current_time - last_data_time) >= exit_terms_idle_timeout:
                 inactivity_duration = current_time - last_data_time
-                logger.info(f"Console inactivity timeout ({SESSION_READ_INACTIVITY_TIMEOUT}s) reached for command '{cmd}' "
+                # Check if any exit term matches the current output
+                for exit_regex in exit_terms_regexes:
+                    if exit_regex.search(output_buffer):
+                        logger.info(f"Exit term matched for command '{cmd}' after {elapsed_time:.1f}s "
+                                  f"(inactive for {inactivity_duration:.1f}s). Returning early.")
+                        exit_terms_checked = True
+                        break
+                if exit_terms_checked:
+                    break
+
+            # Fallback Completion Check: Inactivity timeout
+            elif (current_time - last_data_time) > read_timeout:
+                inactivity_duration = current_time - last_data_time
+                logger.info(f"Console inactivity timeout ({read_timeout}s) reached for command '{cmd}' "
                           f"after {elapsed_time:.1f}s total. No data for {inactivity_duration:.1f}s. Assuming complete.")
                 break
 
@@ -490,7 +531,8 @@ def _parse_options_gracefully(options: Union[Dict[str, Any], str, None]) -> Dict
     
     Handles:
     - Dict format (correct): {"key": "value", "key2": "value2"}
-    - String format (common mistake): "key=value,key=value"
+    - Comma-separated string format: "key=value,key=value"
+    - Space-separated string format: "value key=value key2=value2" (first value without '=' is treated as RHOSTS)
     - None: returns empty dict
     
     Args:
@@ -510,7 +552,7 @@ def _parse_options_gracefully(options: Union[Dict[str, Any], str, None]) -> Dict
         return options
     
     if isinstance(options, str):
-        # Handle the common mistake format: "key=value,key=value"
+        # Handle string format options
         if not options.strip():
             return {}
             
@@ -518,47 +560,123 @@ def _parse_options_gracefully(options: Union[Dict[str, Any], str, None]) -> Dict
         parsed_options = {}
         
         try:
-            # Split by comma and then by equals
-            pairs = [pair.strip() for pair in options.split(',') if pair.strip()]
-            for pair in pairs:
-                if '=' not in pair:
-                    raise ValueError(f"Invalid option format: '{pair}' (missing '=')")
+            # Determine if we should use comma-separated or space-separated parsing
+            # If string contains commas, prefer comma-separated (backward compatibility)
+            # Otherwise, use space-separated parsing
+            has_commas = ',' in options
+            has_spaces = ' ' in options
+            
+            if has_commas:
+                # Comma-separated format: "key=value,key2=value2"
+                tokens = [pair.strip() for pair in options.split(',') if pair.strip()]
+            elif has_spaces:
+                # Space-separated format: "value key=value key2=value2"
+                # Split by spaces, but preserve quoted values
+                tokens = []
+                current_token = ""
+                in_quotes = False
+                quote_char = None
                 
-                key, value = pair.split('=', 1)  # Split only on first '='
-                key = key.strip()
-                value = value.strip()
+                i = 0
+                while i < len(options):
+                    char = options[i]
+                    if char in ('"', "'") and (i == 0 or options[i-1] != '\\'):
+                        if not in_quotes:
+                            in_quotes = True
+                            quote_char = char
+                            current_token += char
+                        elif char == quote_char:
+                            in_quotes = False
+                            quote_char = None
+                            current_token += char
+                        else:
+                            current_token += char
+                    elif char == ' ' and not in_quotes:
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                        current_token = ""
+                    else:
+                        current_token += char
+                    i += 1
                 
-                # Validate key is not empty
-                if not key:
-                    raise ValueError(f"Invalid option format: '{pair}' (empty key)")
-                
-                # Remove quotes if they wrap the entire value
-                if (value.startswith('"') and value.endswith('"')) or \
-                   (value.startswith("'") and value.endswith("'")):
-                    value = value[1:-1]
-                
-                # Basic type conversion
-                if value.lower() in ('true', 'false'):
-                    value = value.lower() == 'true'
-                elif value.isdigit():
-                    try:
-                        value = int(value)
-                    except ValueError:
-                        pass  # Keep as string if conversion fails
-                
-                parsed_options[key] = value
+                # Add the last token
+                if current_token.strip():
+                    tokens.append(current_token.strip())
+            else:
+                # Single token - treat as key=value or raise error
+                tokens = [options.strip()]
+            
+            # Track if we've seen the first value without '=' (for RHOSTS in space-separated format)
+            first_value_assigned = False
+            
+            for token in tokens:
+                if not token:
+                    continue
+                    
+                if '=' in token:
+                    # Key=value pair
+                    key, value = token.split('=', 1)  # Split only on first '='
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Validate key is not empty
+                    if not key:
+                        raise ValueError(f"Invalid option format: '{token}' (empty key)")
+                    
+                    # Remove quotes if they wrap the entire value
+                    if (value.startswith('"') and value.endswith('"')) or \
+                       (value.startswith("'") and value.endswith("'")):
+                        value = value[1:-1]
+                    
+                    # Basic type conversion
+                    if value.lower() in ('true', 'false'):
+                        value = value.lower() == 'true'
+                    elif value.isdigit():
+                        try:
+                            value = int(value)
+                        except ValueError:
+                            pass  # Keep as string if conversion fails
+                    
+                    parsed_options[key] = value
+                else:
+                    # Value without '=' - check if it looks like a malformed key=value pair
+                    # If it starts with letters that look like a key (e.g., "LHOST192.168.1.100"), it's an error
+                    # Otherwise, treat as RHOSTS value
+                    token_stripped = token.strip()
+                    
+                    # Check if it looks like a malformed key=value (starts with letters followed by numbers/IP)
+                    # Pattern: starts with 2+ letters/underscores, then has numbers/dots without space
+                    # This catches cases like "LHOST192.168.1.100" but not "192.168.1.100"
+                    if re.match(r'^[A-Za-z_]{2,}[A-Za-z0-9_]*[0-9]', token_stripped) and not has_spaces:
+                        # Looks like "LHOST192.168.1.100" - malformed, should be "LHOST=192.168.1.100"
+                        raise ValueError(f"Invalid option format: '{token}' (missing '=')")
+                    
+                    # Treat as RHOSTS value
+                    if not first_value_assigned:
+                        # First value without '=' is typically RHOSTS (for both single value and space-separated)
+                        parsed_options['RHOSTS'] = token_stripped
+                        first_value_assigned = True
+                    else:
+                        # In comma-separated format, all tokens must have '='
+                        if has_commas:
+                            raise ValueError(f"Invalid option format: '{token}' (missing '=')")
+                        # In space-separated format, if we already assigned RHOSTS, this is an error
+                        else:
+                            raise ValueError(f"Invalid option format: '{token}' (missing '=' and RHOSTS already assigned)")
             
             logger.info(f"Successfully converted string options to dict: {parsed_options}")
             return parsed_options
             
         except Exception as e:
-            raise ValueError(f"Failed to parse options string '{options}': {e}. Expected format: 'key=value,key2=value2' or dict {{'key': 'value'}}")
+            if isinstance(e, ValueError):
+                raise
+            raise ValueError(f"Failed to parse options string '{options}': {e}. Expected format: 'key=value,key2=value2' or 'value key=value key2=value2' or dict {{'key': 'value'}}")
     
     # For any other type, try to convert to dict
     try:
         return dict(options)
     except (TypeError, ValueError) as e:
-        raise ValueError(f"Options must be a dictionary or comma-separated string format 'key=value,key2=value2'. Got {type(options)}: {options}")
+        raise ValueError(f"Options must be a dictionary or string format 'key=value,key2=value2' or 'value key=value key2=value2'. Got {type(options)}: {options}")
 
 async def _get_compatible_payloads_console(exploit_module: str) -> List[str]:
     """
@@ -1195,6 +1313,11 @@ async def _execute_module_rpc(
             else:
                  message += " No session detected within timeout."
                  status = "warning" # Indicate job started but session didn't appear
+
+                 # If there's a job ID and a payload LPORT set, kill the job
+                 if job_id and (payload_options or {}).get('LPORT'):
+                    await asyncio.to_thread(lambda: client.jobs.stop(str(job_id)))
+                    logger.info(f"Killed job {job_id} due to LPORT setting in payload options.")
         elif module_type in ('auxiliary', 'post'):
             if module_result is not None:
                 if module_result_status == 'completed':
@@ -1251,7 +1374,8 @@ async def _execute_module_console(
     module_options: Dict[str, Any],
     command: str, # Typically 'exploit', 'run', or 'check'
     payload_spec: Optional[Union[str, Dict[str, Any]]] = None,
-    timeout: int = LONG_CONSOLE_READ_TIMEOUT
+    timeout: int = LONG_CONSOLE_READ_TIMEOUT,
+    exit_terms_regexes: Optional[List[re.Pattern]] = None
 ) -> Dict[str, Any]:
     """Helper to execute a module synchronously via console."""
     # Determine full path needed for 'use' command
@@ -1370,7 +1494,7 @@ async def _execute_module_console(
                        f"(timeout: {timeout}s)")
             
             start_execution_time = asyncio.get_event_loop().time()
-            module_output = await run_command_safely(console, command, execution_timeout=timeout)
+            module_output = await run_command_safely(console, command, execution_timeout=timeout, exit_terms_regexes=exit_terms_regexes)
             execution_duration = asyncio.get_event_loop().time() - start_execution_time
             
             # Check if the command timed out
@@ -1388,15 +1512,40 @@ async def _execute_module_console(
             # --- Parse Console Output ---
             session_id = None
             session_opened_line = ""
-            # More robust session detection pattern
-            session_match = re.search(r"(?:meterpreter|command shell)\s+session\s+(\d+)\s+opened", module_output, re.IGNORECASE)
+            # More robust session detection pattern (using global regex)
+            module_output_bytes = module_output.encode('utf-8', errors='replace')
+            
+            # Check for module load failure early - this should take precedence
+            failed_to_load_match = FAILED_TO_LOAD_MODULE_RE.search(module_output_bytes)
+            if failed_to_load_match:
+                # Extract module name from the error message if possible
+                module_name_match = re.search(rb'Failed to load module:\s*([^\s\n]+)', module_output_bytes, re.IGNORECASE)
+                failed_module = module_name_match.group(1).decode('utf-8', errors='replace') if module_name_match else full_module_path
+                error_msg = f"Module '{failed_module}' failed to load. This typically means the module does not exist or failed to initialize."
+                logger.error(f"Module load failure detected: {error_msg}")
+                return {
+                    "status": "error",
+                    "message": error_msg,
+                    "module_output": module_output,
+                    "module": full_module_path,
+                    "options": module_options,
+                    "payload_name": payload_name_for_log,
+                    "payload_options": payload_options_for_log,
+                    "timed_out": timed_out,
+                    "execution_duration": execution_duration
+                }
+            
+            session_match = SESSION_OPENED_RE.search(module_output_bytes)
             if session_match:
-                 try:
-                     session_id = int(session_match.group(1))
-                     session_opened_line = session_match.group(0) # The matched line segment
-                     logger.info(f"Detected session {session_id} opened in console output.")
-                 except (ValueError, IndexError):
-                     logger.warning("Found session opened pattern, but failed to parse ID.")
+                # Extract session ID from the matched text
+                session_id_match = re.search(rb'session\s+(\d+)', session_match.group(0))
+                if session_id_match:
+                    try:
+                        session_id = int(session_id_match.group(1))
+                        session_opened_line = session_match.group(0).decode('utf-8', errors='replace')  # The matched line segment
+                        logger.info(f"Detected session {session_id} opened in console output.")
+                    except (ValueError, IndexError, AttributeError):
+                        logger.warning("Found session opened pattern, but failed to parse ID.")
 
             status = "success"
             message = f"{module_type.capitalize()} module {full_module_path} completed via console ({command})."
@@ -1938,12 +2087,63 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
         # Apply platform and arch filters if provided
         if platform:
             plat_lower = platform.lower()
+            # Separate ARCH_CMD payloads (cmd stagers) - they work on any platform
+            cmd_stagers = [p for p in filtered if p.lower().startswith('cmd/')]
+            other_payloads = [p for p in filtered if not p.lower().startswith('cmd/')]
+            
+            # Apply platform filter to non-cmd payloads
             # Match platform at the start of the payload path segment or within common paths
-            filtered = [p for p in filtered if p.lower().startswith(plat_lower + '/') or f"/{plat_lower}/" in p.lower()]
+            filtered_other = [p for p in other_payloads if p.lower().startswith(plat_lower + '/') or f"/{plat_lower}/" in p.lower()]
+            
+            # For cmd stagers, check if they match the platform (e.g., cmd/unix/ matches platform='unix')
+            filtered_cmd = [p for p in cmd_stagers if f"/{plat_lower}/" in p.lower()]
+            
+            # If no platform-matched cmd stagers, include all cmd stagers anyway (they're universal)
+            if not filtered_cmd and cmd_stagers:
+                # No cmd stagers matched platform, but include them anyway as they're universal
+                filtered_cmd = cmd_stagers
+                logger.debug(f"Platform filter '{platform}': Including all {len(cmd_stagers)} ARCH_CMD stagers (universal)")
+            
+            filtered = filtered_other + filtered_cmd
+            logger.debug(f"Platform filter '{platform}': {len(filtered_other)} matching payloads + {len(filtered_cmd)} ARCH_CMD stagers = {len(filtered)} total")
+        
         if arch:
             arch_lower = arch.lower()
+            
+            # Non-architecture-specific payload types that should always be included
+            # These work on any architecture (ARCH_CMD, ARCH_PHP, ARCH_PYTHON, etc.)
+            non_arch_specific_prefixes = [
+                'cmd/',      # ARCH_CMD - command stagers
+                'php/',      # ARCH_PHP
+                'python/',   # ARCH_PYTHON
+                'java/',     # ARCH_JAVA
+                'ruby/',     # ARCH_RUBY
+                'dalvik/',   # ARCH_DALVIK
+                'nodejs/',   # ARCH_NODEJS
+                'firefox/',  # ARCH_FIREFOX
+                'r/',        # ARCH_R
+                'tty/',      # ARCH_TTY
+            ]
+            
+            # Helper function to check if payload is non-architecture-specific
+            # Handles both "cmd/unix/reverse_bash" and "payload/cmd/unix/reverse_bash" formats
+            def is_non_arch_specific(payload_path: str) -> bool:
+                path_lower = payload_path.lower()
+                # Remove "payload/" prefix if present for checking
+                check_path = path_lower[8:] if path_lower.startswith('payload/') else path_lower
+                return any(check_path.startswith(prefix) for prefix in non_arch_specific_prefixes)
+            
+            # Separate non-architecture-specific payloads from architecture-specific ones
+            non_arch_payloads = [p for p in filtered if is_non_arch_specific(p)]
+            arch_specific_payloads = [p for p in filtered if not is_non_arch_specific(p)]
+            
+            # Apply arch filter strictly to architecture-specific payloads
             # Match architecture more flexibly (e.g., '/x64/', 'meterpreter')
-            filtered = [p for p in filtered if f"/{arch_lower}/" in p.lower() or arch_lower in p.lower().split('/')]
+            filtered_arch_specific = [p for p in arch_specific_payloads if f"/{arch_lower}/" in p.lower() or arch_lower in p.lower().split('/')]
+            
+            # Always include non-architecture-specific payloads regardless of arch filter
+            filtered = filtered_arch_specific + non_arch_payloads
+            logger.debug(f"Arch filter '{arch}': {len(filtered_arch_specific)} arch-specific matching payloads + {len(non_arch_payloads)} non-arch-specific payloads = {len(filtered)} total")
         
         # Apply search_term filter if provided
         if search_term:
@@ -2273,6 +2473,20 @@ async def run_exploit(
         Dictionary with execution results (job_id, session_id, output) or error details.
     """
     logger.info(f"Request to run exploit '{module_name}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload_name}")
+
+    logger.info(f"Module {module_name} options: {options}")
+    logger.info(f"Payload {payload_name} options: {payload_options}")
+    
+    # Validate module exists before proceeding
+    try:
+        await _get_module_object('exploit', module_name)
+        logger.debug(f"Module '{module_name}' validated successfully")
+    except InvalidModuleError as e:
+        logger.warning(f"Exploit module '{module_name}' not found: {e}")
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        logger.error(f"Error validating module '{module_name}': {e}")
+        return {"status": "error", "message": f"Error validating module '{module_name}': {e}"}
     
     # Parse options gracefully (handles both dict and string formats)
     try:
@@ -2334,25 +2548,39 @@ async def run_exploit(
                 if not port_available:
                     return {"status": "error", "message": f"Cannot run exploit: {port_error}"}
             except (ValueError, TypeError) as e:
+                logger.error(f"Invalid LPORT value '{lport_value}': {e}", exc_info=True)
                 return {"status": "error", "message": f"Invalid LPORT value '{lport_value}': {e}"}
 
     if check_vulnerability:
         logger.info(f"Performing vulnerability check first for {module_name}...")
         try:
              # Use the console helper for 'check' as it provides output
+             # Pass exit terms regexes to return early when vulnerability status is determined
              check_result = await _execute_module_console(
                  module_type='exploit',
                  module_name=module_name,
                  module_options=parsed_options,
                  command='check', # Use the 'check' command
-                 timeout=timeout_seconds
+                 timeout=timeout_seconds,
+                 exit_terms_regexes=[IS_VULNERABLE_RE, IS_NOT_VULNERABLE_RE, FAILED_TO_LOAD_MODULE_RE]
              )
              logger.info(f"Vulnerability check result: {check_result.get('status')} - {check_result.get('message')}")
-             output = check_result.get("module_output", "").lower()
-             # Check output for positive indicators
-             is_vulnerable = "appears vulnerable" in output or "is vulnerable" in output or "+ vulnerable" in output
-             # Check for negative indicators (more reliable sometimes)
-             is_not_vulnerable = "does not appear vulnerable" in output or "is not vulnerable" in output or "target is not vulnerable" in output or "check failed" in output
+             output = check_result.get("module_output", "")
+             output_bytes = output.encode('utf-8', errors='replace')
+             
+             # Check for module load failure first - this takes precedence
+             if FAILED_TO_LOAD_MODULE_RE.search(output_bytes):
+                 module_name_match = re.search(rb'Failed to load module:\s*([^\s\n]+)', output_bytes, re.IGNORECASE)
+                 failed_module = module_name_match.group(1).decode('utf-8', errors='replace') if module_name_match else module_name
+                 error_msg = f"Module '{failed_module}' failed to load during check. This typically means the module does not exist or failed to initialize."
+                 logger.error(f"Module load failure detected during check: {error_msg}")
+                 return {"status": "error", "message": error_msg, "check_output": output}
+             
+             output_lower = output.lower()
+             # Check output for positive indicators using global regex
+             is_vulnerable = bool(IS_VULNERABLE_RE.search(output_bytes))
+             # Check for negative indicators using global regex
+             is_not_vulnerable = bool(IS_NOT_VULNERABLE_RE.search(output_bytes))
              if check_result.get('status') == "errror":
                  logger.warning(f"Error from metasploit: {check_result}")
                  return {"status": "aborted", "message": f"Check indicates a failure: {check_result.get('message')}", "check_output": check_result.get("module_output")}
@@ -2369,6 +2597,15 @@ async def run_exploit(
         except Exception as chk_e:
              logger.warning(f"Vulnerability check failed for {module_name}: {chk_e}. Proceeding with exploit attempt.")
              # Fall through to exploit attempt
+        if payload_spec is None:
+            # Just return the check result if no payload was provided
+            return {
+                "status": "success",
+                "message": f"Check indicates target appears vulnerable to {module_name}.",
+                "check_output": check_result.get("module_output")
+            }
+            
+    
 
     # Execute the exploit
     exploit_start_time = asyncio.get_event_loop().time()
@@ -2390,7 +2627,8 @@ async def run_exploit(
                 module_options=parsed_options,
                 command='exploit',
                 payload_spec=payload_spec,
-                timeout=timeout_seconds
+                timeout=timeout_seconds,
+                exit_terms_regexes=[SESSION_OPENED_RE, FAILED_TO_LOAD_MODULE_RE]  # Return early when session is opened or module fails to load
             )
     except InvalidModuleError as e:
         logger.warning(f"Exploit module '{module_name}' not found: {e}")
@@ -2398,6 +2636,11 @@ async def run_exploit(
     
     exploit_duration = asyncio.get_event_loop().time() - exploit_start_time
     logger.info(f"Exploit '{module_name}' execution completed in {exploit_duration:.1f}s with status: {result.get('status')}")
+
+    if payload_spec is None:
+        result['extra_info'] = "No payload was provided, are you sure that's what you want?"
+
+    logger.info(f"Full outcome of exploit '{module_name}': {result}")
     
     return result
 
@@ -2424,6 +2667,17 @@ async def run_post_module(
         Dictionary with execution results or error details.
     """
     logger.info(f"Request to run post module {module_name} on session {session_id}. Job: {run_as_job}")
+    
+    # Validate module exists before proceeding
+    try:
+        await _get_module_object('post', module_name)
+        logger.debug(f"Module '{module_name}' validated successfully")
+    except InvalidModuleError as e:
+        logger.warning(f"Post module '{module_name}' not found: {e}")
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        logger.error(f"Error validating module '{module_name}': {e}")
+        return {"status": "error", "message": f"Error validating module '{module_name}': {e}"}
     
     # Parse options gracefully (handles both dict and string formats)
     try:
@@ -2460,7 +2714,8 @@ async def run_post_module(
                 module_name=module_name,
                 module_options=module_options,
                 command='run',
-                timeout=timeout_seconds
+                timeout=timeout_seconds,
+                exit_terms_regexes=[FAILED_TO_LOAD_MODULE_RE]  # Return early when module fails to load
             )
     except InvalidModuleError as e:
         logger.warning(f"Post module '{module_name}' not found: {e}")
@@ -2488,6 +2743,17 @@ async def run_auxiliary_module(
     """
     logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}")
     
+    # Validate module exists before proceeding
+    try:
+        await _get_module_object('auxiliary', module_name)
+        logger.debug(f"Module '{module_name}' validated successfully")
+    except InvalidModuleError as e:
+        logger.warning(f"Auxiliary module '{module_name}' not found: {e}")
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        logger.error(f"Error validating module '{module_name}': {e}")
+        return {"status": "error", "message": f"Error validating module '{module_name}': {e}"}
+    
     # Parse options gracefully (handles both dict and string formats)
     try:
         module_options = _parse_options_gracefully(options)
@@ -2509,7 +2775,8 @@ async def run_auxiliary_module(
                 module_name=module_name,
                 module_options=module_options,
                 command='run',
-                timeout=timeout_seconds
+                timeout=timeout_seconds,
+                exit_terms_regexes=[FAILED_TO_LOAD_MODULE_RE]  # Return early when module fails to load
             )
     except InvalidModuleError as e:
         logger.warning(f"Auxiliary module '{module_name}' not found: {e}")
@@ -3388,6 +3655,21 @@ def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
     if not (1 <= port <= 65535):
         return False, f"Invalid port {port}. Must be between 1 and 65535."
     
+    # First, check all connections using psutil to detect all connection states
+    # (LISTEN, ESTABLISHED, TIME_WAIT, CLOSE_WAIT, etc.)
+    try:
+        connections = psutil.net_connections(kind='inet')
+        for conn in connections:
+            if conn.laddr and conn.laddr.port == port:
+                # Port is in use (any state: LISTEN, ESTABLISHED, etc.)
+                logger.debug(f"Port {port} in use by connection: {conn.status} "
+                           f"local={conn.laddr} remote={conn.raddr}")
+                return False, f"Port {port} is already in use by connection: {conn.status} local={conn.laddr} remote={conn.raddr}"
+    except (psutil.AccessDenied, psutil.NoSuchProcess, OSError) as e:
+        # If psutil fails (permission issues), fall through to socket check
+        logger.warning(f"psutil check failed for port {port}: {e}, falling back to socket check")
+
+
     try:
         # Try to bind to the port
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
