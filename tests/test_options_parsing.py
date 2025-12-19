@@ -249,6 +249,60 @@ class TestParseOptionsGracefully:
             assert any("Converting string format" in msg for msg in call_args)
             assert any("Successfully converted" in msg for msg in call_args)
 
+    def test_space_separated_format(self):
+        """Test space-separated format parsing."""
+        # Basic space-separated format
+        input_str = "10.77.0.191 RPORT=80 TARGETURI=/cgi-bin/"
+        expected = {"RHOSTS": "10.77.0.191", "RPORT": 80, "TARGETURI": "/cgi-bin/"}
+        result = _parse_options_gracefully(input_str)
+        assert result == expected
+
+    def test_space_separated_with_multiple_options(self):
+        """Test space-separated format with multiple key=value pairs."""
+        input_str = "192.168.1.100 RPORT=443 SSL=true VERBOSE=false"
+        expected = {"RHOSTS": "192.168.1.100", "RPORT": 443, "SSL": True, "VERBOSE": False}
+        result = _parse_options_gracefully(input_str)
+        assert result == expected
+
+    def test_space_separated_with_quoted_values(self):
+        """Test space-separated format with quoted values."""
+        input_str = '10.0.0.1 TARGETURI="/path with spaces" RPORT=8080'
+        expected = {"RHOSTS": "10.0.0.1", "TARGETURI": "/path with spaces", "RPORT": 8080}
+        result = _parse_options_gracefully(input_str)
+        assert result == expected
+
+    def test_space_separated_single_value(self):
+        """Test space-separated format with just a single value (RHOSTS)."""
+        input_str = "192.168.1.1"
+        expected = {"RHOSTS": "192.168.1.1"}
+        result = _parse_options_gracefully(input_str)
+        assert result == expected
+
+    def test_comma_separated_preferred_over_space(self):
+        """Test that comma-separated format is preferred when both are present."""
+        # This should be parsed as comma-separated (backward compatibility)
+        input_str = "LHOST=192.168.1.100,LPORT=4444"
+        expected = {"LHOST": "192.168.1.100", "LPORT": 4444}
+        result = _parse_options_gracefully(input_str)
+        assert result == expected
+
+    def test_space_separated_error_multiple_values_without_equals(self):
+        """Test that space-separated format raises error for multiple values without '='."""
+        with pytest.raises(ValueError, match="missing '=' and RHOSTS already assigned"):
+            _parse_options_gracefully("10.77.0.191 10.77.0.192 RPORT=80")
+
+    def test_space_separated_with_complex_paths(self):
+        """Test space-separated format with complex paths and values."""
+        input_str = "10.77.0.191 RPORT=80 TARGETURI=/cgi-bin/test.cgi USERNAME=admin"
+        expected = {
+            "RHOSTS": "10.77.0.191",
+            "RPORT": 80,
+            "TARGETURI": "/cgi-bin/test.cgi",
+            "USERNAME": "admin"
+        }
+        result = _parse_options_gracefully(input_str)
+        assert result == expected
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
