@@ -23,32 +23,36 @@ All configuration is done via environment variables, making it easy to enable de
 |----------|---------|-------------|
 | `ASYNCIO_DEBUG` | `false` | Enable asyncio debug mode with slow callback detection |
 | `EVENT_LOOP_SLOW_CALLBACK_THRESHOLD` | `0.1` | Threshold in seconds for slow callback warnings |
-| `EVENT_LOOP_WATCHDOG` | `false` | Enable the watchdog thread for blocking detection |
+| `EVENT_LOOP_WATCHDOG` | `true` | Enable the watchdog thread for blocking detection (enabled by default) |
 | `EVENT_LOOP_WATCHDOG_INTERVAL` | `1.0` | How often the watchdog checks (seconds) |
 | `EVENT_LOOP_WATCHDOG_THRESHOLD` | `0.5` | Delay threshold that triggers a warning (seconds) |
+| `EVENT_LOOP_BACKLOG_THRESHOLD` | `100` | Number of pending tasks that triggers a backlog warning |
 
 ## Enabling Monitoring
+
+**Note**: The watchdog (including backlog monitoring) is **enabled by default**. You only need to configure it if you want to change thresholds or disable it.
 
 ### Quick Start
 
 ```bash
-# Enable asyncio debug mode
-ASYNCIO_DEBUG=true python MetasploitMCP.py
-
-# Enable watchdog with custom thresholds
-EVENT_LOOP_WATCHDOG=true \
-EVENT_LOOP_WATCHDOG_INTERVAL=0.5 \
-EVENT_LOOP_WATCHDOG_THRESHOLD=0.2 \
+# Watchdog is enabled by default - just run normally
 python MetasploitMCP.py
+
+# Customize thresholds
+EVENT_LOOP_WATCHDOG_THRESHOLD=0.3 \
+EVENT_LOOP_BACKLOG_THRESHOLD=50 \
+python MetasploitMCP.py
+
+# Disable watchdog if needed
+EVENT_LOOP_WATCHDOG=false python MetasploitMCP.py
 ```
 
 ### Full Debug Mode
 
-For comprehensive debugging, enable both features:
+For comprehensive debugging, enable asyncio debug mode as well:
 
 ```bash
 ASYNCIO_DEBUG=true \
-EVENT_LOOP_WATCHDOG=true \
 EVENT_LOOP_WATCHDOG_THRESHOLD=0.3 \
 LOG_LEVEL=DEBUG \
 python MetasploitMCP.py
@@ -76,6 +80,15 @@ When the watchdog detects the event loop is blocked:
 --- MainThread (likely event loop) ---
 File "/path/to/MetasploitMCP.py", line 342, in some_function
     result = blocking_operation()  # <- BLOCKING CALL!
+```
+
+### Event Loop Backlog Warning
+
+When the event loop has too many pending tasks:
+
+```
+📊 EVENT LOOP BACKLOG WARNING: 150 pending tasks (threshold=100, ready_callbacks=5, total_tasks=150, warning_count=1)
+   Sample pending tasks: some_function, another_function, execute_exploit, ...
 ```
 
 ### Severe Blocking (Callback Didn't Respond)
@@ -142,11 +155,19 @@ stats = get_monitoring_stats()
 
 ## Best Practices
 
-1. **Development**: Enable both `ASYNCIO_DEBUG=true` and `EVENT_LOOP_WATCHDOG=true` with low thresholds to catch issues early.
+1. **Default Behavior**: The watchdog is enabled by default with reasonable thresholds. No configuration needed for most use cases.
 
-2. **Production Debugging**: Enable only `EVENT_LOOP_WATCHDOG=true` with reasonable thresholds (0.5s+) to avoid excessive logging.
+2. **Development**: Enable `ASYNCIO_DEBUG=true` with low thresholds to catch issues early:
+   ```bash
+   ASYNCIO_DEBUG=true EVENT_LOOP_WATCHDOG_THRESHOLD=0.2 python MetasploitMCP.py
+   ```
 
-3. **Performance Testing**: Use higher thresholds or disable after identifying issues to avoid monitoring overhead.
+3. **Production**: The default settings work well for production. Adjust thresholds if you see too many warnings:
+   ```bash
+   EVENT_LOOP_WATCHDOG_THRESHOLD=1.0 EVENT_LOOP_BACKLOG_THRESHOLD=200 python MetasploitMCP.py
+   ```
+
+4. **Disable if Needed**: If monitoring overhead is a concern, disable with `EVENT_LOOP_WATCHDOG=false`
 
 ## Common Blocking Causes
 

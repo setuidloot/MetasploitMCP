@@ -2286,7 +2286,7 @@ async def generate_payload(
             check_bind_port = parsed_options.get('ReverseListenerBindPort', lport_int)
             
             # Check port availability (as a warning, not blocking)
-            port_available, port_error = check_port_available(check_bind_port, check_bind_address)
+            port_available, port_error = await check_port_available(check_bind_port, check_bind_address)
             if not port_available:
                 logger.warning(f"Port check during payload generation: {port_error}. "
                               f"This payload will need a listener on {check_bind_address}:{check_bind_port}")
@@ -2544,7 +2544,7 @@ async def run_exploit(
                 bind_port = parsed_payload_options.get('ReverseListenerBindPort', lport_int)
                 
                 # Check if port is available
-                port_available, port_error = check_port_available(bind_port, bind_address)
+                port_available, port_error = await check_port_available(bind_port, bind_address)
                 if not port_available:
                     return {"status": "error", "message": f"Cannot run exploit: {port_error}"}
             except (ValueError, TypeError) as e:
@@ -3223,7 +3223,7 @@ async def start_listener(
         return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
     
     # Check if the port is available before trying to bind
-    port_available, port_error = check_port_available(bind_port, bind_address)
+    port_available, port_error = await check_port_available(bind_port, bind_address)
     if not port_available:
         return {"status": "error", "message": f"Cannot start listener: {port_error}"}
 
@@ -3641,7 +3641,7 @@ async def http_root_endpoint(request: Request) -> JSONResponse:
 
 # --- Server Startup Logic ---
 
-def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
+async def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
     """
     Check if a port is available to bind to.
     
@@ -3657,8 +3657,10 @@ def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
     
     # First, check all connections using psutil to detect all connection states
     # (LISTEN, ESTABLISHED, TIME_WAIT, CLOSE_WAIT, etc.)
+    # Run psutil in executor as it can be slow
+    loop = asyncio.get_event_loop()
     try:
-        connections = psutil.net_connections(kind='inet')
+        connections = await loop.run_in_executor(None, psutil.net_connections, 'inet')
         for conn in connections:
             if conn.laddr and conn.laddr.port == port:
                 # Port is in use (any state: LISTEN, ESTABLISHED, etc.)
@@ -3669,18 +3671,26 @@ def check_port_available(port: int, host: str = '0.0.0.0') -> Tuple[bool, str]:
         # If psutil fails (permission issues), fall through to socket check
         logger.warning(f"psutil check failed for port {port}: {e}, falling back to socket check")
 
-
+    # Run blocking socket operations in executor to avoid blocking event loop
+    def _check_socket_bind():
+        try:
+            # Try to bind to the port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind((host, port))
+                logger.debug(f"Port {port} on {host} is available.")
+                return True, ""
+        except socket.error as e:
+            error_msg = f"Port {port} is already in use on {host}. Please choose a different port or stop the service using this port."
+            logger.warning(error_msg)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Error checking port {port} availability: {e}"
+            logger.error(error_msg)
+            return False, error_msg
+    
     try:
-        # Try to bind to the port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind((host, port))
-            logger.debug(f"Port {port} on {host} is available.")
-            return True, ""
-    except socket.error as e:
-        error_msg = f"Port {port} is already in use on {host}. Please choose a different port or stop the service using this port."
-        logger.warning(error_msg)
-        return False, error_msg
+        return await loop.run_in_executor(None, _check_socket_bind)
     except Exception as e:
         error_msg = f"Error checking port {port} availability: {e}"
         logger.error(error_msg)
