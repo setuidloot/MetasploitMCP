@@ -388,6 +388,67 @@ class TestPayloadGeneration:
         assert result["status"] == "error"
         assert "Invalid options format" in result["message"]
 
+    @pytest.mark.asyncio
+    async def test_generate_payload_keyerror_from_rpc(self, mock_asyncio_to_thread):
+        """Test payload generation handles KeyError from pymetasploit3.
+        
+        This tests the case where Metasploit RPC returns a response without
+        the expected 'payload' key, causing pymetasploit3 to raise KeyError.
+        This can happen when:
+        - Missing required options
+        - Incompatible payload/format combination
+        - The payload doesn't support the requested format
+        """
+        client = MockMsfRpcClient()
+        module = MockMsfModule('payload/java/jsp_shell_reverse_tcp')
+        
+        # Mock payload_generate to raise KeyError (simulating pymetasploit3 behavior)
+        def raise_keyerror():
+            raise KeyError(b'payload')
+        module.payload_generate = raise_keyerror
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=module):
+                options = {"LHOST": "192.168.1.100", "LPORT": 4444}
+                result = await generate_payload(
+                    payload_type="java/jsp_shell_reverse_tcp",
+                    format_type="war",
+                    options=options
+                )
+        
+        assert result["status"] == "error"
+        assert "java/jsp_shell_reverse_tcp" in result["message"]
+        assert "war" in result["message"]
+        # Verify helpful guidance is included
+        assert "payload_type" in result
+        assert "format" in result
+        assert result["payload_type"] == "java/jsp_shell_reverse_tcp"
+        assert result["format"] == "war"
+
+    @pytest.mark.asyncio
+    async def test_generate_payload_keyerror_with_missing_required(self, mock_asyncio_to_thread):
+        """Test payload generation includes missing_required info on KeyError."""
+        client = MockMsfRpcClient()
+        module = MockMsfModule('payload/windows/meterpreter/reverse_tcp')
+        module.missing_required = ['LHOST', 'LPORT']
+        
+        # Mock payload_generate to raise KeyError
+        def raise_keyerror():
+            raise KeyError(b'payload')
+        module.payload_generate = raise_keyerror
+        
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            with patch('MetasploitMCP._get_module_object', return_value=module):
+                options = {"LHOST": "192.168.1.100"}  # Missing LPORT
+                result = await generate_payload(
+                    payload_type="windows/meterpreter/reverse_tcp",
+                    format_type="exe",
+                    options=options
+                )
+        
+        assert result["status"] == "error"
+        assert result.get("missing_required") == ['LHOST', 'LPORT']
+
 
 class TestExploitExecution:
     """Test exploit execution functionality."""
