@@ -15,8 +15,32 @@ import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+# ExceptionGroup is available in Python 3.11+ as BaseExceptionGroup
+# For compatibility, we'll check for it
+if sys.version_info >= (3, 11):
+    # Python 3.11+ has BaseExceptionGroup built-in
+    ExceptionGroup = BaseExceptionGroup  # type: ignore
+else:
+    # For older versions, try to import from exceptiongroup package
+    try:
+        from exceptiongroup import ExceptionGroup  # type: ignore
+    except ImportError:
+        # Fallback - shouldn't happen given our Python >= 3.10 requirement
+        ExceptionGroup = Exception  # type: ignore
+
 # --- Third-party Libraries ---
 from fastmcp import FastMCP, Context
+
+# Starlette imports for middleware
+try:
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.middleware import Middleware
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
+    STARLETTE_AVAILABLE = True
+except ImportError:
+    STARLETTE_AVAILABLE = False
+    BaseHTTPMiddleware = None  # type: ignore
+    Middleware = None  # type: ignore
 
 if os.getenv('MSF_RPC_PROTOCOL', 'msgpack').lower() == 'jsonrpc':
     # Apply JSON-RPC monkeypatch BEFORE importing pymetasploit3 classes
@@ -60,6 +84,175 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("metasploit_mcp_server")
+
+# --- MCP Keep-Alive Progress Support ---
+# Import keep-alive utilities from exploitmcp when available (used via gateway)
+# Falls back to a no-op implementation when running standalone
+try:
+    from src.exploitmcp.core.keep_alive_progress import (
+        KeepAliveProgressManager,
+        DEFAULT_KEEPALIVE_INTERVAL
+    )
+    KEEPALIVE_AVAILABLE = True
+    logger.debug("KeepAliveProgressManager imported from exploitmcp")
+except ImportError:
+    KEEPALIVE_AVAILABLE = False
+    DEFAULT_KEEPALIVE_INTERVAL = 10.0  # Default interval in seconds
+    logger.debug("exploitmcp keep-alive not available, using no-op fallback")
+    
+    class KeepAliveProgressManager:
+        """
+        No-op fallback for when exploitmcp is not available.
+        This allows MetasploitMCP to run standalone without keep-alive support.
+        """
+        def __init__(self, ctx, interval=10.0, operation_name="Operation", 
+                     initial_progress=5, max_progress=90):
+            self.ctx = ctx
+            self.interval = interval
+            self.operation_name = operation_name
+            self.initial_progress = initial_progress
+            self.max_progress = max_progress
+        
+        async def start(self):
+            """No-op start."""
+            pass
+        
+        async def stop(self, send_completion=True):
+            """No-op stop."""
+            pass
+        
+        async def __aenter__(self):
+            """Context manager entry."""
+            return self
+        
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            """Context manager exit."""
+            pass
+
+
+class _NoOpContextManager:
+    """A no-op async context manager for when ctx is None."""
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+    
+    async def start(self):
+        pass
+    
+    async def stop(self, send_completion=True):
+        pass
+
+
+def get_keepalive_manager(
+    ctx: Optional[Context],
+    operation_name: str,
+    interval: float = DEFAULT_KEEPALIVE_INTERVAL,
+    initial_progress: int = 5,
+    max_progress: int = 90
+):
+    """
+    Get a keep-alive manager for long-running operations.
+    
+    Returns a no-op context manager if ctx is None (for testing),
+    otherwise returns a proper KeepAliveProgressManager.
+    """
+    if ctx is None:
+        return _NoOpContextManager()
+    return KeepAliveProgressManager(
+        ctx,
+        interval=interval,
+        operation_name=operation_name,
+        initial_progress=initial_progress,
+        max_progress=max_progress
+    )
+
+# Enable DEBUG logging for MCP streamable_http to diagnose SSE issues
+# This will help us understand the request flow and identify race conditions
+if os.environ.get("DEBUG_SSE", "false").lower() in ("true", "1", "yes"):
+    logging.getLogger("mcp.server.streamable_http").setLevel(logging.DEBUG)
+    logging.getLogger("mcp.server.streamable_http_manager").setLevel(logging.DEBUG)
+    logging.getLogger("sse_starlette").setLevel(logging.DEBUG)
+    logger.info("SSE debugging enabled - will log detailed request flow information")
+
+# Configure logging for MCP server to handle SSE disconnection errors gracefully
+# This is a known issue with Starlette middleware when clients disconnect during SSE streams
+# The error "Unexpected message received: http.request" is non-critical and occurs during
+# connection cleanup when clients disconnect unexpectedly. We add a custom filter to
+# downgrade these specific errors to WARNING level to reduce noise in logs.
+class SSEErrorFilter(logging.Filter):
+    """Filter to downgrade non-critical SSE disconnection errors.
+    
+    This handles a known issue with Starlette middleware when clients disconnect
+    unexpectedly during Server-Sent Events (SSE) streams. The error "Unexpected message
+    received: http.request" occurs during connection cleanup and is non-critical.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Check if this is the specific SSE disconnection error we want to handle
+        if record.name == "mcp.server.streamable_http" and record.levelno == logging.ERROR:
+            error_msg = str(record.getMessage())
+            # Check exception info if available
+            exception_msg = ""
+            if record.exc_info and record.exc_info[1]:
+                exception_msg = str(record.exc_info[1])
+            
+            # Check for the specific SSE disconnection error patterns
+            if ("Unexpected message received: http.request" in error_msg or
+                "Unexpected message received: http.request" in exception_msg or
+                "SSE response error" in error_msg):
+                # Downgrade to WARNING level as this is expected during normal operation
+                record.levelno = logging.WARNING
+                record.levelname = "WARNING"
+        return True
+
+# Apply the filter to the MCP streamable_http logger
+mcp_streamable_http_logger = logging.getLogger("mcp.server.streamable_http")
+mcp_streamable_http_logger.addFilter(SSEErrorFilter())
+
+# Add asyncio exception handler to catch unhandled SSE disconnection errors
+# This is needed because the errors occur in TaskGroups and may not be properly caught
+def _check_for_sse_error(exception: BaseException) -> bool:
+    """Recursively check if an exception or ExceptionGroup contains an SSE disconnection error."""
+    if isinstance(exception, RuntimeError):
+        error_msg = str(exception)
+        if "Unexpected message received: http.request" in error_msg:
+            return True
+    elif isinstance(exception, ExceptionGroup):
+        # Recursively check all exceptions in the group
+        for exc in exception.exceptions:
+            if _check_for_sse_error(exc):
+                return True
+    return False
+
+def handle_asyncio_exception(loop: asyncio.AbstractEventLoop, context: Dict[str, Any]) -> None:
+    """Handle unhandled exceptions in asyncio event loop, specifically SSE disconnection errors.
+    
+    This handler catches RuntimeErrors about "Unexpected message received: http.request" which
+    occur when clients disconnect unexpectedly during Server-Sent Events (SSE) streams. These
+    errors are non-critical and should not break the connection.
+    """
+    exception = context.get('exception')
+    message = context.get('message', '')
+    
+    # Check if this is the SSE disconnection error we want to handle gracefully
+    if exception and _check_for_sse_error(exception):
+        # This is a known non-critical SSE disconnection error
+        # Log it as a warning instead of letting it propagate as an error
+        logger.warning(
+            f"SSE client disconnection detected (non-critical): {message}. "
+            f"This occurs when clients disconnect unexpectedly during Server-Sent Events streams. "
+            f"The connection will continue to function normally."
+        )
+        return
+    
+    # For all other exceptions, use the default handler behavior
+    # But we'll log it at a more appropriate level
+    if exception:
+        logger.error(f"Unhandled exception in event loop: {message}", exc_info=exception)
+    else:
+        logger.error(f"Unhandled error in event loop: {message}")
+
 session_shell_type: Dict[str, str] = {}
 
 # Metasploit Connection Config (from environment variables)
@@ -504,15 +697,39 @@ from mcp.server.session import ServerSession
 ####################################################################################
 # Temporary monkeypatch which avoids crashing when a POST message is received
 # before a connection has been initialized, e.g: after a deployment.
+# NOTE: This should only catch specific initialization errors, not all RuntimeErrors,
+# as catching all RuntimeErrors can mask legitimate protocol errors.
 # pylint: disable-next=protected-access
 old__received_request = ServerSession._received_request
 
 
 async def _received_request(self, *args, **kwargs):
+    # Add diagnostic logging to understand request flow
+    import inspect
+    frame = inspect.currentframe()
     try:
-        return await old__received_request(self, *args, **kwargs)
-    except RuntimeError:
-        pass
+        # Log when request is received
+        logger.debug(f"[SSE_DEBUG] _received_request called with args={len(args)} kwargs={list(kwargs.keys())}")
+        result = await old__received_request(self, *args, **kwargs)
+        logger.debug(f"[SSE_DEBUG] _received_request completed successfully")
+        return result
+    except RuntimeError as e:
+        # Only suppress errors related to uninitialized connections
+        # Do NOT suppress "Unexpected message received" errors as those indicate
+        # protocol-level issues that need to be handled properly
+        error_msg = str(e)
+        logger.warning(f"[SSE_DEBUG] RuntimeError in _received_request: {error_msg}")
+        if "Unexpected message received" in error_msg:
+            # Log full context before re-raising
+            logger.error(
+                f"[SSE_DEBUG] Protocol error detected - Unexpected message received. "
+                f"This suggests a race condition where a new request arrives while "
+                f"SSE disconnect listener is active. Error: {error_msg}"
+            )
+            # Re-raise protocol errors - they need proper handling
+            raise
+        # Only suppress initialization-related errors
+        logger.debug(f"Suppressed initialization error in _received_request: {e}")
 
 
 # pylint: disable-next=protected-access
@@ -1975,19 +2192,39 @@ async def _find_similar_documentation_files(docs_path: pathlib.Path, module_name
 
 
 @mcp.tool()
-async def list_exploits(search_term: str = "") -> List[str]:
+async def list_exploits(search_term: str = "", ctx: Optional[Context] = None) -> List[str]:
     """
     List available Metasploit exploits, optionally filtered by search term.
 
     Args:
         search_term: Optional term to filter exploits (case-insensitive).
+        ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         List of exploit names matching the term (max 200), or top 100 if no term.
     """
     client = get_msf_client()
     logger.info(f"Listing exploits (search term: '{search_term or 'None'}')")
+    
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message="Listing exploits from Metasploit..."
+        )
+    
+    # Use keep-alive for potentially slow RPC calls
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name="List exploits",
+        initial_progress=5,
+        max_progress=90
+    )
+    
     try:
+        await keepalive.start()
+        
         # Add timeout to prevent hanging on slow/unresponsive MSF server
         logger.debug(f"Calling client.modules.exploits with {RPC_CALL_TIMEOUT}s timeout...")
         exploits = await asyncio.wait_for(
@@ -2001,10 +2238,28 @@ async def list_exploits(search_term: str = "") -> List[str]:
             count = len(filtered_exploits)
             limit = 200
             logger.info(f"Found {count} exploits matching '{search_term}'. Returning max {limit}.")
+            
+            # Report completion if ctx available
+            if ctx:
+                await ctx.report_progress(
+                    progress=100,
+                    total=100,
+                    message=f"Found {min(count, limit)} exploits"
+                )
+            
             return filtered_exploits[:limit]
         else:
             limit = 100
             logger.info(f"No search term provided, returning first {limit} exploits.")
+            
+            # Report completion if ctx available
+            if ctx:
+                await ctx.report_progress(
+                    progress=100,
+                    total=100,
+                    message=f"Returning {limit} exploits"
+                )
+            
             return exploits[:limit]
     except asyncio.TimeoutError:
         error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing exploits from Metasploit server. Server may be slow or unresponsive."
@@ -2016,9 +2271,11 @@ async def list_exploits(search_term: str = "") -> List[str]:
     except Exception as e:
         logger.exception("Unexpected error listing exploits.")
         return [f"Error: Unexpected error listing exploits: {e}"]
+    finally:
+        await keepalive.stop(send_completion=False)
 
 @mcp.tool()
-async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "", include_fetch_payloads: bool = False) -> List[str]:
+async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "", include_fetch_payloads: bool = False, ctx: Optional[Context] = None) -> List[str]:
     """
     List available Metasploit payloads, optionally filtered by platform, architecture, exploit module compatibility, and/or search term.
     
@@ -2038,6 +2295,7 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
                     Returns matching payloads regardless of compatibility.
         include_fetch_payloads: If True, includes Fetch Payloads (cmd/*) in results. These require run_as_job=False to use.
                                Default is False as they need console execution.
+        ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         List of payload names matching filters (max 100), prefixed with 'payload/' to match msfconsole format.
@@ -2050,7 +2308,25 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
     client = get_msf_client()
     logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}', search: '{search_term or 'Any'}')")
     
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message="Listing payloads from Metasploit..."
+        )
+    
+    # Use keep-alive for potentially slow RPC calls
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name="List payloads",
+        initial_progress=5,
+        max_progress=90
+    )
+    
     try:
+        await keepalive.start()
+        
         # If exploit_module is provided, get compatible payloads for that module
         if exploit_module:
             logger.info(f"Getting compatible payloads for exploit module: {exploit_module}")
@@ -2164,6 +2440,14 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
         
         result = payloads[:limit]
         
+        # Report completion if ctx available
+        if ctx:
+            await ctx.report_progress(
+                progress=100,
+                total=100,
+                message=f"Found {len(result)} payloads"
+            )
+        
         return result
     except asyncio.TimeoutError:
         error_msg = f"Timeout ({RPC_CALL_TIMEOUT}s) while listing payloads from Metasploit server. Server may be slow or unresponsive."
@@ -2175,6 +2459,8 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
     except Exception as e:
         logger.exception("Unexpected error listing payloads.")
         return [f"Error: Unexpected error listing payloads: {e}"]
+    finally:
+        await keepalive.stop(send_completion=False)
 
 @mcp.tool()
 async def generate_payload(
@@ -2191,6 +2477,7 @@ async def generate_payload(
     output_filename: Optional[str] = None,
     reverse_listener_bind_address: Optional[str] = None,
     reverse_listener_bind_port: Optional[int] = None,
+    ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Generate a Metasploit payload using the RPC API (payload.generate).
@@ -2244,6 +2531,14 @@ async def generate_payload(
     """
     client = get_msf_client()
     logger.info(f"Generating payload '{payload_type}' (Format: {format_type}) via RPC. Options: {options}")
+    
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message=f"Generating payload: {payload_type}"
+        )
 
     # Parse options gracefully
     try:
@@ -2295,7 +2590,17 @@ async def generate_payload(
         except (ValueError, TypeError) as e:
             logger.warning(f"Could not validate LPORT value '{lport_value}' during payload generation: {e}")
 
+    # Use keep-alive for payload generation
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name=f"Generate payload {payload_type}",
+        initial_progress=10,
+        max_progress=90
+    )
+
     try:
+        await keepalive.start()
+        
         # Get the payload module object
         payload = await _get_module_object('payload', payload_type)
 
@@ -2377,6 +2682,15 @@ async def generate_payload(
             with open(save_path, "wb") as f:
                 f.write(raw_payload_bytes)
             logger.info(f"Payload saved to {save_path}")
+            
+            # Report completion if ctx available
+            if ctx:
+                await ctx.report_progress(
+                    progress=100,
+                    total=100,
+                    message=f"Payload generated: {payload_size} bytes"
+                )
+            
             return {
                 "status": "success",
                 "message": f"Payload '{payload_type}' generated successfully and saved.",
@@ -2410,20 +2724,67 @@ async def generate_payload(
         if "object has no attribute 'payload_generate'" in str(e):
             return {"status": "error", "message": f"The pymetasploit3 payload module doesn't have the payload_generate method. Please check library version/compatibility."}
         return {"status": "error", "message": f"An attribute error occurred: {e}"}
+    except KeyError as e:
+        # KeyError from pymetasploit3's payload_generate() when Metasploit RPC returns
+        # an error response without a 'payload' key (e.g., missing options, invalid format)
+        error_str = str(e)
+        logger.error(
+            f"KeyError during payload generation for '{payload_type}' (format: {format_type}): {e}. "
+            f"This typically indicates the Metasploit RPC server rejected the payload generation request. "
+            f"Options provided: {parsed_options}",
+            exc_info=True
+        )
+        
+        # Provide helpful guidance based on common issues
+        guidance_messages = []
+        if 'payload' in error_str.lower():
+            guidance_messages.append(
+                f"The Metasploit RPC server did not return generated payload data. "
+                f"Common causes: (1) Missing required options (check LHOST, LPORT for reverse payloads), "
+                f"(2) Incompatible format '{format_type}' for payload '{payload_type}' "
+                f"(try 'raw', 'elf', 'exe', 'war', 'jar', or 'jsp' depending on payload type), "
+                f"(3) The payload module may have specific requirements not met."
+            )
+        
+        # Check if payload module has info about required options
+        missing_required = []
+        try:
+            if 'payload' in locals() and hasattr(payload, 'missing_required'):
+                missing_required = payload.missing_required
+                if missing_required:
+                    guidance_messages.append(f"Missing required options: {missing_required}")
+        except Exception:
+            pass  # Don't fail on introspection
+        
+        return {
+            "status": "error",
+            "message": (
+                f"Payload generation failed for '{payload_type}' with format '{format_type}'. "
+                + " ".join(guidance_messages) if guidance_messages else
+                f"Payload generation failed for '{payload_type}' with format '{format_type}'. "
+                f"The Metasploit server did not return the expected payload data. "
+                f"Verify that the payload type, format, and options are valid and compatible."
+            ),
+            "payload_type": payload_type,
+            "format": format_type,
+            "missing_required": missing_required if missing_required else None
+        }
     except Exception as e:
         logger.exception(f"Unexpected error during payload generation for '{payload_type}'.")
         return {"status": "error", "message": f"An unexpected server error occurred during payload generation: {e}"}
+    finally:
+        await keepalive.stop(send_completion=False)
 
 @mcp.tool()
 async def run_exploit(
     module_name: str,
     options: Union[Dict[str, Any], str],
-    ctx: Context,
     payload_name: Optional[str] = None,
     payload_options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
     check_vulnerability: bool = False, # New option
-    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT # Used only if run_as_job=False
+    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT, # Used only if run_as_job=False
+    ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Run a Metasploit exploit module with specified options. Handles async (job)
@@ -2607,10 +2968,28 @@ async def run_exploit(
             
     
 
-    # Execute the exploit
+    # Execute the exploit with MCP keep-alive to prevent client timeouts
     exploit_start_time = asyncio.get_event_loop().time()
     
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message=f"Starting exploit execution: {module_name}"
+        )
+    
+    # Use keep-alive for long-running exploit execution
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name=f"Exploit {module_name}",
+        initial_progress=10,
+        max_progress=90
+    )
+    
     try:
+        await keepalive.start()
+        
         if run_as_job:
             logger.info(f"Executing exploit '{module_name}' as background job via RPC")
             result = await _execute_module_rpc(
@@ -2633,9 +3012,19 @@ async def run_exploit(
     except InvalidModuleError as e:
         logger.warning(f"Exploit module '{module_name}' not found: {e}")
         return {"status": "error", "message": str(e)}
+    finally:
+        await keepalive.stop(send_completion=False)
     
     exploit_duration = asyncio.get_event_loop().time() - exploit_start_time
     logger.info(f"Exploit '{module_name}' execution completed in {exploit_duration:.1f}s with status: {result.get('status')}")
+    
+    # Report completion if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=100,
+            total=100,
+            message=f"Exploit execution completed: {result.get('status', 'unknown')}"
+        )
 
     if payload_spec is None:
         result['extra_info'] = "No payload was provided, are you sure that's what you want?"
@@ -2650,7 +3039,8 @@ async def run_post_module(
     session_id: int,
     options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
-    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
+    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT,
+    ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Run a Metasploit post-exploitation module against a session.
@@ -2662,11 +3052,20 @@ async def run_post_module(
                 or string format "VERBOSE=true". 'SESSION' will be added automatically.
         run_as_job: If False, run sync via console. If True, run async via RPC.
         timeout_seconds: Max time for synchronous run via console.
+        ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with execution results or error details.
     """
     logger.info(f"Request to run post module {module_name} on session {session_id}. Job: {run_as_job}")
+    
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message=f"Starting post module: {module_name}"
+        )
     
     # Validate module exists before proceeding
     try:
@@ -2700,16 +3099,26 @@ async def run_post_module(
         return {"status": "error", "message": f"Error validating session {session_id}: {e}", "module": module_name}
 
 
+    # Use keep-alive for potentially long-running post module execution
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name=f"Post module {module_name}",
+        initial_progress=10,
+        max_progress=90
+    )
+    
     try:
+        await keepalive.start()
+        
         if run_as_job:
-            return await _execute_module_rpc(
+            result = await _execute_module_rpc(
                 module_type='post',
                 module_name=module_name,
                 module_options=module_options
                 # No payload for post modules
             )
         else:
-            return await _execute_module_console(
+            result = await _execute_module_console(
                 module_type='post',
                 module_name=module_name,
                 module_options=module_options,
@@ -2717,16 +3126,28 @@ async def run_post_module(
                 timeout=timeout_seconds,
                 exit_terms_regexes=[FAILED_TO_LOAD_MODULE_RE]  # Return early when module fails to load
             )
+        
+        # Report completion if ctx available
+        if ctx:
+            await ctx.report_progress(
+                progress=100,
+                total=100,
+                message=f"Post module completed: {result.get('status', 'unknown')}"
+            )
+        return result
     except InvalidModuleError as e:
         logger.warning(f"Post module '{module_name}' not found: {e}")
         return {"status": "error", "message": str(e)}
+    finally:
+        await keepalive.stop(send_completion=False)
 
 @mcp.tool()
 async def run_auxiliary_module(
     module_name: str,
     options: Union[Dict[str, Any], str],
     run_as_job: bool = True, # Default False for scanners often makes sense
-    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT
+    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT,
+    ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Run a Metasploit auxiliary module.
@@ -2737,11 +3158,20 @@ async def run_auxiliary_module(
                 or string format "RHOSTS=192.168.1.1,USERNAME=admin". Prefer dict format.
         run_as_job: If False, run sync via console. If True, run async via RPC.
         timeout_seconds: Max time for synchronous run via console.
+        ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with execution results or error details.
     """
     logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}")
+    
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message=f"Starting auxiliary module: {module_name}"
+        )
     
     # Validate module exists before proceeding
     try:
@@ -2760,17 +3190,26 @@ async def run_auxiliary_module(
     except ValueError as e:
         return {"status": "error", "message": f"Invalid options format: {e}"}
 
+    # Use keep-alive for potentially long-running auxiliary module execution
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name=f"Auxiliary module {module_name}",
+        initial_progress=10,
+        max_progress=90
+    )
 
     try:
+        await keepalive.start()
+        
         if run_as_job:
-            return await _execute_module_rpc(
+            result = await _execute_module_rpc(
                 module_type='auxiliary',
                 module_name=module_name,
                 module_options=module_options
                 # No payload for aux modules
             )
         else:
-            return await _execute_module_console(
+            result = await _execute_module_console(
                 module_type='auxiliary',
                 module_name=module_name,
                 module_options=module_options,
@@ -2778,9 +3217,20 @@ async def run_auxiliary_module(
                 timeout=timeout_seconds,
                 exit_terms_regexes=[FAILED_TO_LOAD_MODULE_RE]  # Return early when module fails to load
             )
+        
+        # Report completion if ctx available
+        if ctx:
+            await ctx.report_progress(
+                progress=100,
+                total=100,
+                message=f"Auxiliary module completed: {result.get('status', 'unknown')}"
+            )
+        return result
     except InvalidModuleError as e:
         logger.warning(f"Auxiliary module '{module_name}' not found: {e}")
         return {"status": "error", "message": str(e)}
+    finally:
+        await keepalive.stop(send_completion=False)
 
 @mcp.tool()
 async def list_active_sessions() -> Dict[str, Any]:
@@ -2829,8 +3279,8 @@ async def list_active_sessions() -> Dict[str, Any]:
 async def send_session_command(
     session_id: int,
     command: str,
-    ctx: Context,
     timeout_seconds: int = SESSION_COMMAND_TIMEOUT,
+    ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Send a command to an active Metasploit session (Meterpreter or Shell) and get output.
@@ -2844,6 +3294,7 @@ async def send_session_command(
         session_id: ID of the target session.
         command: Command string to execute in the session.
         timeout_seconds: Maximum time to wait for the command to complete.
+        ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with status ('success', 'error', 'timeout') and raw command output.
@@ -2851,8 +3302,26 @@ async def send_session_command(
     client = get_msf_client()
     logger.info(f"Sending command to session {session_id}: '{command}'")
     session_id_str = str(session_id)
+    
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message=f"Sending command to session {session_id}: {command[:50]}..."
+        )
+    
+    # Use keep-alive for potentially long-running session commands
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name=f"Session {session_id} command",
+        initial_progress=5,
+        max_progress=90
+    )
 
     try:
+        await keepalive.start()
+        
         # --- Get Session Info and Object ---
         logger.info(f"Retrieving session {session_id} information and object")
         start_time = asyncio.get_event_loop().time()
@@ -3048,6 +3517,13 @@ async def send_session_command(
             logger.warning(f"Cannot execute command: Unknown session type '{session_type}' for session {session_id}")
             message = f"Cannot execute command: Unknown session type '{session_type}'."
 
+        # Report completion progress if ctx available
+        if ctx:
+            await ctx.report_progress(
+                progress=100,
+                total=100,
+                message=f"Session command completed: {status}"
+            )
         return {"status": status, "message": message, "output": output}
 
     except MsfRpcError as e:
@@ -3062,6 +3538,8 @@ async def send_session_command(
     except Exception as e:
         logger.exception(f"Unexpected error sending command to session {session_id}.")
         return {"status": "error", "message": f"Unexpected server error sending command: {e}"}
+    finally:
+        await keepalive.stop(send_completion=False)
 
 
 # --- Job and Listener Management Tools ---
@@ -3149,7 +3627,8 @@ async def start_listener(
     additional_options: Optional[Union[Dict[str, Any], str]] = None,
     exit_on_session: bool = False, # Option to keep listener running
     reverse_listener_bind_address: Optional[str] = None,
-    reverse_listener_bind_port: Optional[int] = None
+    reverse_listener_bind_port: Optional[int] = None,
+    ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Start a new Metasploit handler (exploit/multi/handler) as a background job.
@@ -3200,6 +3679,7 @@ async def start_listener(
                                       Use this when LHOST differs from the interface to bind to (e.g., NAT/firewall).
         reverse_listener_bind_port: Optional bind port for the handler (defaults to LPORT).
                                    Use this when LPORT differs from the port to bind to (e.g., port forwarding).
+        ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with handler status (job_id) or error details.
@@ -3249,8 +3729,26 @@ async def start_listener(
 
     payload_spec = {"name": payload_type, "options": payload_options}
 
+    # Report initial progress if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=0,
+            total=100,
+            message=f"Starting listener: {payload_type} on {lhost}:{lport}"
+        )
+    
+    # Use keep-alive for listener startup
+    keepalive = get_keepalive_manager(
+        ctx,
+        operation_name=f"Start listener {payload_type}",
+        initial_progress=10,
+        max_progress=90
+    )
+
     # Use the RPC helper to start the handler job
     try:
+        await keepalive.start()
+        
         result = await _execute_module_rpc(
             module_type='exploit',
             module_name='multi/handler', # Use base name for helper
@@ -3260,6 +3758,16 @@ async def start_listener(
     except InvalidModuleError as e:
         logger.warning(f"Payload '{payload_type}' not found for listener: {e}")
         return {"status": "error", "message": str(e)}
+    finally:
+        await keepalive.stop(send_completion=False)
+
+    # Report completion if ctx available
+    if ctx:
+        await ctx.report_progress(
+            progress=100,
+            total=100,
+            message=f"Listener started: {result.get('status', 'unknown')}"
+        )
 
     # Rename status/message slightly for clarity
     if result.get("status") == "success":
@@ -3809,6 +4317,22 @@ if __name__ == "__main__":
     # Configure event loop debugging if enabled via environment variables
     # Set ASYNCIO_DEBUG=true and/or EVENT_LOOP_WATCHDOG=true to enable
     configure_event_loop_debugging()
+    
+    # Set custom exception handler for asyncio event loop to handle SSE disconnection errors
+    # This must be done before starting the server
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is already running, we need to set it in a different way
+            # For now, we'll set it when the loop is created
+            logger.debug("Event loop is already running, exception handler will be set on next loop creation")
+        else:
+            loop.set_exception_handler(handle_asyncio_exception)
+            logger.debug("Custom asyncio exception handler installed for SSE error handling")
+    except RuntimeError:
+        # No event loop exists yet, it will be created by FastMCP
+        # We'll set the handler after the loop is created
+        logger.debug("No event loop exists yet, will set exception handler after loop creation")
 
     # --- Setup argument parser for transport mode and server configuration ---
     import argparse
@@ -3856,6 +4380,27 @@ if __name__ == "__main__":
         logger.info(f"Health Check:    http://{args.host}:{selected_port}/health")
         logger.info(f"Service Info:    http://{args.host}:{selected_port}/")
         logger.info(f"Payload Save Directory: {PAYLOAD_SAVE_DIR}")
+        
+        # Ensure exception handler is set before starting the server
+        # FastMCP will create a new event loop if needed
+        async def setup_exception_handler():
+            """Set exception handler after event loop is created."""
+            try:
+                loop = asyncio.get_running_loop()
+                loop.set_exception_handler(handle_asyncio_exception)
+                logger.debug("Custom asyncio exception handler installed for SSE error handling")
+            except RuntimeError:
+                # Loop not running, will be set when loop starts
+                pass
+        
+        # Try to set exception handler now if possible
+        try:
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                loop.set_exception_handler(handle_asyncio_exception)
+        except RuntimeError:
+            # No loop exists yet, will be created by FastMCP
+            pass
         
         try:
             mcp.run(transport="streamable-http")
