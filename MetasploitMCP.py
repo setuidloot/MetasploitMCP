@@ -275,6 +275,7 @@ EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
 MODULE_RESULT_POLL_TIMEOUT = 300   # Max time to wait for auxiliary/post module completion
 MODULE_RESULT_POLL_INTERVAL = 2    # How often to check module.running_stats
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
+MAX_TOOL_TIMEOUT_SECONDS = 120  # Maximum timeout allowed for tool parameters (cap at 120s)
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
@@ -290,6 +291,9 @@ SESSION_OPENED_RE = re.compile(rb'(?:meterpreter|command shell)\s+session\s+\d+\
 
 # Regular Expression for Module Load Failure Detection
 FAILED_TO_LOAD_MODULE_RE = re.compile(rb'\[-\]\s+Failed to load module:', re.IGNORECASE)
+
+# Regular Expression for Module Check Not Supported Detection
+CHECK_NOT_SUPPORTED_RE = re.compile(rb'This module does not support check', re.IGNORECASE)
 
 # --- Metasploit Client Setup ---
 
@@ -403,6 +407,107 @@ def get_msf_client() -> MsfRpcClient:
         raise ConnectionError("Metasploit client has not been initialized.") # Strict check preferred
     logger.debug("Retrieved MSF client instance successfully.")
     return _msf_client_instance
+
+
+def cleanup_msf_client() -> None:
+    """
+    Clean up the global MSF client connection.
+    
+    This performs proper cleanup by:
+    1. Calling auth.logout to properly close the RPC session on the server
+    2. Clearing the global client reference
+    
+    This helps reduce TIME_WAIT connections by properly closing the session
+    instead of just dropping the connection.
+    """
+    global _msf_client_instance
+    
+    if _msf_client_instance is None:
+        logger.debug("No MSF client to cleanup")
+        return
+    
+    try:
+        logger.info("Cleaning up MSF RPC client connection...")
+        
+        # Call auth.logout to properly close the session on the server
+        # This tells the server to clean up our authentication token
+        try:
+            token = getattr(_msf_client_instance, 'token', None)
+            if token:
+                logger.debug(f"Calling auth.logout for global MSF client...")
+                _msf_client_instance.call('auth.logout', [token])
+                logger.info("MSF RPC session logged out successfully")
+            else:
+                logger.warning("No token found on MSF client, skipping logout")
+        except Exception as e:
+            # Log but don't fail - the connection may already be closed
+            logger.warning(f"Error during MSF RPC logout: {e}")
+        
+        # Clear the global reference
+        _msf_client_instance = None
+        logger.info("MSF client cleanup complete")
+        
+    except Exception as e:
+        logger.error(f"Error during MSF client cleanup: {e}", exc_info=True)
+
+
+async def cleanup_msf_client_async() -> None:
+    """
+    Async version of cleanup_msf_client for use in async contexts.
+    """
+    global _msf_client_instance
+    
+    if _msf_client_instance is None:
+        logger.debug("No MSF client to cleanup")
+        return
+    
+    try:
+        logger.info("Cleaning up MSF RPC client connection (async)...")
+        
+        # Call auth.logout to properly close the session on the server
+        try:
+            token = getattr(_msf_client_instance, 'token', None)
+            if token:
+                logger.debug(f"Calling auth.logout for global MSF client...")
+                await asyncio.to_thread(
+                    lambda: _msf_client_instance.call('auth.logout', [token])
+                )
+                logger.info("MSF RPC session logged out successfully")
+            else:
+                logger.warning("No token found on MSF client, skipping logout")
+        except Exception as e:
+            # Log but don't fail - the connection may already be closed
+            logger.warning(f"Error during MSF RPC logout: {e}")
+        
+        # Clear the global reference
+        _msf_client_instance = None
+        logger.info("MSF client cleanup complete")
+        
+    except Exception as e:
+        logger.error(f"Error during MSF client cleanup: {e}", exc_info=True)
+
+
+async def cleanup_all_msf_resources() -> None:
+    """
+    Clean up all MSF resources including global client and instance manager.
+    
+    This should be called during server shutdown to properly close all
+    RPC connections and prevent TIME_WAIT accumulation.
+    """
+    logger.info("Cleaning up all MSF resources...")
+    
+    # Clean up instance manager (if multi-agent mode is enabled)
+    if _instance_manager is not None:
+        try:
+            await _instance_manager.shutdown()
+            logger.info("Metasploit Instance Manager shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down Metasploit Instance Manager: {e}", exc_info=True)
+    
+    # Clean up global client
+    await cleanup_msf_client_async()
+    
+    logger.info("All MSF resources cleanup complete")
 
 async def check_msf_connection() -> Dict[str, Any]:
     """
@@ -1881,9 +1986,11 @@ async def describe_module(
         - privileged: Whether it requires privileged access
         - disclosure_date: When the vulnerability was disclosed
     """
-    logger.info(f"describe_module called for '{module_type}/{module_name}'")
+    logger.info(f"describe_module called with module_name='{module_name}', module_type='{module_type}'")
     
-    # Normalize module name - strip type prefix if provided
+    # Normalize module name - strip type prefix if provided to avoid double-prefix issues
+    # e.g., if called with module_name="exploit/unix/ftp/foo" and module_type="exploit",
+    # we should use "unix/ftp/foo" as base_module_name, not "exploit/unix/ftp/foo"
     base_module_name = module_name
     if '/' in module_name:
         parts = module_name.split('/')
@@ -1893,14 +2000,16 @@ async def describe_module(
                 logger.debug(f"Module type from path '{parts[0]}' differs from specified type '{module_type}', using path type")
                 module_type = parts[0]
             base_module_name = '/'.join(parts[1:])
+            logger.debug(f"Normalized module path: stripped '{parts[0]}/' prefix -> base_module_name='{base_module_name}'")
     
     full_module_path = f"{module_type}/{base_module_name}"
+    logger.info(f"describe_module: resolved to full_module_path='{full_module_path}'")
     
     try:
         client = get_msf_client()
         
         # Get module info via RPC
-        logger.debug(f"Calling module.info for {module_type}/{base_module_name}")
+        logger.debug(f"Calling module.info RPC with args: ['{module_type}', '{base_module_name}']")
         module_info = await asyncio.wait_for(
             asyncio.to_thread(
                 lambda: client.call('module.info', [module_type, base_module_name])
@@ -2561,7 +2670,7 @@ async def generate_payload(
     
     # Validate bind address if one was set
     if bind_address_to_validate is not None:
-        is_valid, error_msg = validate_bind_address(bind_address_to_validate)
+        is_valid, error_msg = await validate_bind_address(bind_address_to_validate)
         if not is_valid:
             return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
     
@@ -2783,7 +2892,7 @@ async def run_exploit(
     payload_options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
     check_vulnerability: bool = False, # New option
-    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT, # Used only if run_as_job=False
+    timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT, # Used only if run_as_job=False (max: 120s)
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
@@ -2828,11 +2937,16 @@ async def run_exploit(
                         AUTOMATICALLY creates the listener on the specified LHOST/LPORT.
         run_as_job: If False, run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
-        timeout_seconds: Max time for synchronous run via console.
+        timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
 
     Returns:
         Dictionary with execution results (job_id, session_id, output) or error details.
     """
+    # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
+    if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
+        timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    
     logger.info(f"Request to run exploit '{module_name}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload_name}")
 
     logger.info(f"Module {module_name} options: {options}")
@@ -2923,7 +3037,7 @@ async def run_exploit(
                  module_options=parsed_options,
                  command='check', # Use the 'check' command
                  timeout=timeout_seconds,
-                 exit_terms_regexes=[IS_VULNERABLE_RE, IS_NOT_VULNERABLE_RE, FAILED_TO_LOAD_MODULE_RE]
+                 exit_terms_regexes=[IS_VULNERABLE_RE, IS_NOT_VULNERABLE_RE, FAILED_TO_LOAD_MODULE_RE, CHECK_NOT_SUPPORTED_RE]
              )
              logger.info(f"Vulnerability check result: {check_result.get('status')} - {check_result.get('message')}")
              output = check_result.get("module_output", "")
@@ -2936,6 +3050,11 @@ async def run_exploit(
                  error_msg = f"Module '{failed_module}' failed to load during check. This typically means the module does not exist or failed to initialize."
                  logger.error(f"Module load failure detected during check: {error_msg}")
                  return {"status": "error", "message": error_msg, "check_output": output}
+             
+             # Check if module doesn't support the check command - proceed with exploit anyway
+             if CHECK_NOT_SUPPORTED_RE.search(output_bytes):
+                 logger.warning(f"Module '{module_name}' does not support check command. Proceeding with exploit attempt.")
+                 # Don't abort - just log and continue to exploit attempt
              
              output_lower = output.lower()
              # Check output for positive indicators using global regex
@@ -3051,12 +3170,17 @@ async def run_post_module(
         options: Dictionary of module options (e.g., {'VERBOSE': True})
                 or string format "VERBOSE=true". 'SESSION' will be added automatically.
         run_as_job: If False, run sync via console. If True, run async via RPC.
-        timeout_seconds: Max time for synchronous run via console.
+        timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with execution results or error details.
     """
+    # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
+    if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
+        timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    
     logger.info(f"Request to run post module {module_name} on session {session_id}. Job: {run_as_job}")
     
     # Report initial progress if ctx available
@@ -3157,12 +3281,17 @@ async def run_auxiliary_module(
         options: Dictionary of module options (e.g., {'RHOSTS': ..., 'USERNAME': ...})
                 or string format "RHOSTS=192.168.1.1,USERNAME=admin". Prefer dict format.
         run_as_job: If False, run sync via console. If True, run async via RPC.
-        timeout_seconds: Max time for synchronous run via console.
+        timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with execution results or error details.
     """
+    # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
+    if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
+        timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    
     logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}")
     
     # Report initial progress if ctx available
@@ -3293,12 +3422,17 @@ async def send_session_command(
     Args:
         session_id: ID of the target session.
         command: Command string to execute in the session.
-        timeout_seconds: Maximum time to wait for the command to complete.
+        timeout_seconds: Maximum time to wait for the command to complete (max: 120s, values above are capped).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         Dictionary with status ('success', 'error', 'timeout') and raw command output.
     """
+    # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
+    if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
+        timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    
     client = get_msf_client()
     logger.info(f"Sending command to session {session_id}: '{command}'")
     session_id_str = str(session_id)
@@ -3697,8 +3831,8 @@ async def start_listener(
     if reverse_listener_bind_port is not None and not (1 <= reverse_listener_bind_port <= 65535):
         return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
     
-    # Validate bind address
-    is_valid, error_msg = validate_bind_address(bind_address)
+    # Validate bind address (async to avoid blocking event loop on socket operations)
+    is_valid, error_msg = await validate_bind_address(bind_address)
     if not is_valid:
         return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
     
@@ -4271,9 +4405,10 @@ def get_local_ip_addresses() -> List[str]:
         # Fallback to basic loopback addresses
         return ['127.0.0.1', '::1']
 
-def validate_bind_address(bind_address: str) -> Tuple[bool, str]:
+def _validate_bind_address_sync(bind_address: str) -> Tuple[bool, str]:
     """
-    Validate that a bind address is either a wildcard address or a configured local IP.
+    Synchronous implementation of bind address validation.
+    This does socket operations and should be called via asyncio.to_thread().
     
     Args:
         bind_address: The IP address to validate
@@ -4292,7 +4427,7 @@ def validate_bind_address(bind_address: str) -> Tuple[bool, str]:
         if addr_obj.is_unspecified:
             return True, ""
         
-        # Get all local IP addresses
+        # Get all local IP addresses (this does socket operations)
         local_ips = get_local_ip_addresses()
         
         # Check if the bind address is one of the local IPs
@@ -4305,6 +4440,21 @@ def validate_bind_address(bind_address: str) -> Tuple[bool, str]:
         
     except ValueError as e:
         return False, f"Invalid IP address format: {bind_address} ({e})"
+
+
+async def validate_bind_address(bind_address: str) -> Tuple[bool, str]:
+    """
+    Validate that a bind address is either a wildcard address or a configured local IP.
+    This is an async function that runs the validation in a thread pool to avoid
+    blocking the event loop during socket operations.
+    
+    Args:
+        bind_address: The IP address to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message). If valid, error_message is empty.
+    """
+    return await asyncio.to_thread(_validate_bind_address_sync, bind_address)
 
 if __name__ == "__main__":
     # Initialize MSF Client - Critical for server function
@@ -4358,8 +4508,12 @@ if __name__ == "__main__":
             logger.exception("Error during MCP stdio run loop.")
             sys.exit(1)
         finally:
+            # Clean up MSF resources
+            logger.info("Shutting down - cleaning up MSF resources...")
+            cleanup_msf_client()
             # Clean up event loop monitoring
             stop_event_loop_monitoring()
+            logger.info("Shutdown complete.")
         logger.info("MCP stdio server finished.")
     else:  # HTTP mode (default)
         logger.info("Starting MCP server in HTTP transport mode.")
@@ -4408,5 +4562,9 @@ if __name__ == "__main__":
             logger.exception("Error during MCP HTTP server run.")
             sys.exit(1)
         finally:
+            # Clean up MSF resources
+            logger.info("Shutting down - cleaning up MSF resources...")
+            cleanup_msf_client()
             # Clean up event loop monitoring
             stop_event_loop_monitoring()
+            logger.info("Shutdown complete.")
