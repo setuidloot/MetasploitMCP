@@ -258,6 +258,10 @@ class MetasploitInstanceManager:
         """
         Terminate a Metasploit instance for an agent.
         
+        Performs proper cleanup by:
+        1. Calling auth.logout RPC to close the session on the server
+        2. Terminating the msfrpcd process
+        
         Args:
             agent_id: Agent identifier
         """
@@ -269,15 +273,24 @@ class MetasploitInstanceManager:
         logger.info(f"Terminating Metasploit instance for agent: {agent_id}")
         
         try:
-            # Close RPC client connection
+            # Step 1: Properly logout via RPC to close the session
             if instance.client:
                 try:
-                    # Gracefully disconnect (no explicit close method, but this helps GC)
-                    instance.client = None
+                    # Call auth.logout to properly close the RPC session
+                    # This tells the server to clean up our authentication token
+                    logger.debug(f"Calling auth.logout for agent {agent_id}...")
+                    await asyncio.to_thread(
+                        lambda: instance.client.call('auth.logout', [instance.client.token])
+                    )
+                    logger.info(f"RPC session logged out successfully for agent {agent_id}")
                 except Exception as e:
-                    logger.warning(f"Error closing RPC client for agent {agent_id}: {e}")
+                    # Log but don't fail - the process termination will clean up anyway
+                    logger.warning(f"Error during RPC logout for agent {agent_id}: {e}")
+                finally:
+                    # Clear the client reference
+                    instance.client = None
             
-            # Terminate process
+            # Step 2: Terminate the msfrpcd process
             if instance.process and instance.is_healthy():
                 logger.debug(f"Sending SIGTERM to msfrpcd (PID: {instance.process.pid})")
                 instance.process.terminate()
@@ -296,7 +309,8 @@ class MetasploitInstanceManager:
             logger.error(f"Error terminating instance for agent {agent_id}: {e}", exc_info=True)
         finally:
             # Remove from registry
-            del self.instances[agent_id]
+            if agent_id in self.instances:
+                del self.instances[agent_id]
     
     async def get_client(self, agent_id: str) -> MsfRpcClient:
         """

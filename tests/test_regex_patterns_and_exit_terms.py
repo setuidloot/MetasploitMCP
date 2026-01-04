@@ -64,6 +64,7 @@ from MetasploitMCP import (
     IS_NOT_VULNERABLE_RE,
     SESSION_OPENED_RE,
     FAILED_TO_LOAD_MODULE_RE,
+    CHECK_NOT_SUPPORTED_RE,
     run_command_safely,
     _execute_module_console,
     get_msf_console
@@ -152,18 +153,39 @@ class TestRegexPatterns:
             result = bool(FAILED_TO_LOAD_MODULE_RE.search(text_bytes))
             assert result == should_match, f"Pattern {'should' if should_match else 'should not'} match: '{text}'"
 
+    def test_check_not_supported_re_patterns(self):
+        """Test CHECK_NOT_SUPPORTED_RE matches module check not supported messages."""
+        test_cases = [
+            ("This module does not support check.", True),
+            ("this module does not support check.", True),  # Case insensitive
+            ("THIS MODULE DOES NOT SUPPORT CHECK.", True),  # Case insensitive
+            ("This module does not support check", True),  # Without period
+            ("[*] This module does not support check.", True),  # With prefix
+            ("[-] This module does not support check.", True),  # With error prefix
+            ("Module does not support check", False),  # Missing "This"
+            ("This module supports check", False),  # Should not match
+            ("Check is supported", False),  # Should not match
+        ]
+        
+        for text, should_match in test_cases:
+            text_bytes = text.encode('utf-8', errors='replace')
+            result = bool(CHECK_NOT_SUPPORTED_RE.search(text_bytes))
+            assert result == should_match, f"Pattern {'should' if should_match else 'should not'} match: '{text}'"
+
     def test_regex_patterns_are_compiled(self):
         """Test that regex patterns are properly compiled."""
         assert isinstance(IS_VULNERABLE_RE, re.Pattern)
         assert isinstance(IS_NOT_VULNERABLE_RE, re.Pattern)
         assert isinstance(SESSION_OPENED_RE, re.Pattern)
         assert isinstance(FAILED_TO_LOAD_MODULE_RE, re.Pattern)
+        assert isinstance(CHECK_NOT_SUPPORTED_RE, re.Pattern)
         
         # Verify they are bytes patterns (pattern is bytes type)
         assert isinstance(IS_VULNERABLE_RE.pattern, bytes)
         assert isinstance(IS_NOT_VULNERABLE_RE.pattern, bytes)
         assert isinstance(SESSION_OPENED_RE.pattern, bytes)
         assert isinstance(FAILED_TO_LOAD_MODULE_RE.pattern, bytes)
+        assert isinstance(CHECK_NOT_SUPPORTED_RE.pattern, bytes)
 
 
 class TestRunCommandSafelyWithExitTerms:
