@@ -255,6 +255,28 @@ def handle_asyncio_exception(loop: asyncio.AbstractEventLoop, context: Dict[str,
 
 session_shell_type: Dict[str, str] = {}
 
+# Per-session locks to serialize concurrent access to the same Meterpreter/shell session.
+# Keyed by session_id_str. Protected by _session_locks_guard for creation/deletion.
+_session_locks: Dict[str, asyncio.Lock] = {}
+_session_locks_guard = asyncio.Lock()
+SESSION_LOCK_WAIT_TIMEOUT = 30  # seconds to wait for a busy session before giving up
+
+
+async def _get_session_lock(session_id_str: str) -> asyncio.Lock:
+    """Atomically get or create an asyncio.Lock for the given session ID."""
+    async with _session_locks_guard:
+        if session_id_str not in _session_locks:
+            _session_locks[session_id_str] = asyncio.Lock()
+        return _session_locks[session_id_str]
+
+
+async def _cleanup_session_lock(session_id_str: str) -> None:
+    """Remove the lock and mode tracking for a session that no longer exists."""
+    session_shell_type.pop(session_id_str, None)
+    async with _session_locks_guard:
+        _session_locks.pop(session_id_str, None)
+
+
 # Metasploit Connection Config (from environment variables)
 MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'msf')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
@@ -3426,7 +3448,8 @@ async def send_session_command(
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
-        Dictionary with status ('success', 'error', 'timeout') and raw command output.
+        Dictionary with status ('success', 'error', 'timeout', 'busy') and raw command output.
+        A 'busy' status means another command is already running on this session — retry after a delay.
     """
     # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
     if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
@@ -3437,6 +3460,23 @@ async def send_session_command(
     logger.info(f"Sending command to session {session_id}: '{command}'")
     session_id_str = str(session_id)
     
+    # Acquire per-session lock to prevent concurrent access to the same session
+    session_lock = await _get_session_lock(session_id_str)
+    try:
+        await asyncio.wait_for(session_lock.acquire(), timeout=SESSION_LOCK_WAIT_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Session {session_id} is busy (lock held for >{SESSION_LOCK_WAIT_TIMEOUT}s). "
+            f"Command '{command}' rejected — agent should retry."
+        )
+        return {
+            "status": "busy",
+            "message": (
+                f"Session {session_id} is currently in use by another command. "
+                f"Waited {SESSION_LOCK_WAIT_TIMEOUT}s. Please retry after a brief delay."
+            ),
+        }
+
     # Report initial progress if ctx available
     if ctx:
         await ctx.report_progress(
@@ -3466,6 +3506,7 @@ async def send_session_command(
         if session_id_str not in current_sessions:
             logger.error(f"Session {session_id} not found in {len(current_sessions)} active sessions "
                         f"(retrieved in {session_list_duration:.1f}s)")
+            await _cleanup_session_lock(session_id_str)
             return {"status": "error", "message": f"Session {session_id} not found."}
 
         session_info = current_sessions[session_id_str]
@@ -3673,6 +3714,7 @@ async def send_session_command(
         logger.exception(f"Unexpected error sending command to session {session_id}.")
         return {"status": "error", "message": f"Unexpected server error sending command: {e}"}
     finally:
+        session_lock.release()
         await keepalive.stop(send_completion=False)
 
 
@@ -4085,11 +4127,29 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
     session_id_str = str(session_id)
     logger.info(f"Terminating session {session_id} (kill_associated_job={kill_associated_job})")
     
+    # Acquire per-session lock so we don't terminate while a command is running
+    session_lock = await _get_session_lock(session_id_str)
+    try:
+        await asyncio.wait_for(session_lock.acquire(), timeout=SESSION_LOCK_WAIT_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Session {session_id} is busy (lock held for >{SESSION_LOCK_WAIT_TIMEOUT}s). "
+            f"Cannot terminate — agent should retry."
+        )
+        return {
+            "status": "busy",
+            "message": (
+                f"Session {session_id} is currently in use by another command. "
+                f"Waited {SESSION_LOCK_WAIT_TIMEOUT}s. Please retry termination after the command finishes."
+            ),
+        }
+
     try:
         # Check if session exists and get session info
         current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
         if session_id_str not in current_sessions:
             logger.error(f"Session {session_id} not found.")
+            await _cleanup_session_lock(session_id_str)
             return {"status": "error", "message": f"Session {session_id} not found."}
         
         session_info = current_sessions[session_id_str]
@@ -4118,6 +4178,7 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
         if session_terminated:
             logger.info(f"Successfully terminated session {session_id}")
             result_messages.append(f"Session {session_id} terminated successfully")
+            await _cleanup_session_lock(session_id_str)
         else:
             logger.warning(f"Session {session_id} still appears in the sessions list after termination attempt.")
             result_messages.append(f"Session {session_id} may not have been terminated properly")
@@ -4183,6 +4244,8 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
     except Exception as e:
         logger.exception(f"Unexpected error terminating session {session_id}")
         return {"status": "error", "message": f"Unexpected error terminating session {session_id}: {e}"}
+    finally:
+        session_lock.release()
 
 # --- Health Check ---
 # Add both MCP tool and HTTP endpoint for health checking
