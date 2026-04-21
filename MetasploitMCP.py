@@ -287,6 +287,33 @@ async def _list_sessions_str_keys(client: Any) -> Dict[str, Any]:
     return {str(k): v for k, v in sessions_raw.items()}
 
 
+async def _get_session_object_from_map(
+    client: Any,
+    sessions_by_str_id: Dict[str, Any],
+    session_id_str: str,
+) -> Any:
+    """Build a session object without relying on SessionManager.session().
+
+    Some pymetasploit3 builds can raise KeyError for existing sessions because
+    SessionManager.session() catches internal TypeError and re-raises KeyError.
+    Constructing via _create_session against a normalized string-key map avoids
+    that failure mode.
+    """
+    if session_id_str not in sessions_by_str_id:
+        raise KeyError(f"Session ID ({session_id_str}) does not exist")
+
+    try:
+        return await asyncio.to_thread(lambda: client.sessions.session(session_id_str))
+    except KeyError:
+        session_info = sessions_by_str_id[session_id_str]
+        create_fn = getattr(client.sessions, "_create_session", None)
+        if callable(create_fn):
+            return await asyncio.to_thread(
+                lambda: create_fn(session_id_str, sessions_by_str_id, session_info)
+            )
+        raise
+
+
 # Metasploit Connection Config (from environment variables)
 MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'msf')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
@@ -3525,7 +3552,11 @@ async def send_session_command(
         logger.info(f"Session {session_id} found: type={session_type}, target={target_host}")
 
         session_obj_start = asyncio.get_event_loop().time()
-        session = await asyncio.to_thread(lambda: client.sessions.session(session_id_str))
+        session = await _get_session_object_from_map(
+            client=client,
+            sessions_by_str_id=current_sessions,
+            session_id_str=session_id_str,
+        )
         session_obj_duration = asyncio.get_event_loop().time() - session_obj_start
         
         if not session:
@@ -4173,7 +4204,11 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
             associated_job_id = session_info.get('job_id')
             
         # Get a handle to the session
-        session = await asyncio.to_thread(lambda: client.sessions.session(session_id_str))
+        session = await _get_session_object_from_map(
+            client=client,
+            sessions_by_str_id=current_sessions,
+            session_id_str=session_id_str,
+        )
         
         # Stop the session
         await asyncio.to_thread(lambda: session.stop())
