@@ -23,6 +23,7 @@ from MetasploitMCP import (
     _get_session_lock,
     _cleanup_session_lock,
     _list_sessions_str_keys,
+    _get_session_object_from_map,
     session_shell_type,
     SESSION_LOCK_WAIT_TIMEOUT,
 )
@@ -138,6 +139,19 @@ class TestSessionListNormalization:
         normalized = await _list_sessions_str_keys(client)
         assert "1" in normalized
         assert normalized["1"]["type"] == "meterpreter"
+
+    @pytest.mark.asyncio
+    async def test_get_session_object_uses_private_constructor_path(self, mock_asyncio_to_thread):
+        client, _ = _make_mock_client({1: {"type": "meterpreter"}})
+        normalized = await _list_sessions_str_keys(client)
+        sentinel_session = Mock()
+        client.sessions._create_session = Mock(return_value=sentinel_session)
+        client.sessions.session = Mock(side_effect=KeyError("broken public lookup"))
+
+        session = await _get_session_object_from_map(client, normalized, "1")
+
+        assert session is sentinel_session
+        client.sessions._create_session.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
