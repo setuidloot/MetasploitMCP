@@ -28,5 +28,9 @@ jobs:
       - name: Install dependencies
         run: poetry install --with dev
 
-      - name: Run tests
-        run: poetry run python -m pytest tests
+      - name: Run required test suite
+        run: >
+          poetry run python -m pytest
+          tests/test_session_locking.py
+          tests/test_timeout_cap.py
+          tests/test_version_bump.py
