@@ -277,6 +277,16 @@ async def _cleanup_session_lock(session_id_str: str) -> None:
         _session_locks.pop(session_id_str, None)
 
 
+async def _list_sessions_str_keys(client: Any) -> Dict[str, Any]:
+    """Return ``client.sessions.list`` with keys normalized to strings."""
+    sessions_raw = await asyncio.to_thread(lambda: client.sessions.list)
+    if not isinstance(sessions_raw, dict):
+        raise MsfRpcError(
+            f"Unexpected data type for sessions list: {type(sessions_raw).__name__}"
+        )
+    return {str(k): v for k, v in sessions_raw.items()}
+
+
 # Metasploit Connection Config (from environment variables)
 MSF_PASSWORD = os.getenv('MSF_PASSWORD', 'msf')
 MSF_SERVER = os.getenv('MSF_SERVER', '127.0.0.1')
@@ -3235,7 +3245,7 @@ async def run_post_module(
     # Add basic session validation before running
     client = get_msf_client()
     try:
-        current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
+        current_sessions = await _list_sessions_str_keys(client)
         if str(session_id) not in current_sessions:
              logger.error(f"Session {session_id} not found for post module {module_name}.")
              return {"status": "error", "message": f"Session {session_id} not found.", "module": module_name}
@@ -3500,7 +3510,7 @@ async def send_session_command(
         logger.info(f"Retrieving session {session_id} information and object")
         start_time = asyncio.get_event_loop().time()
         
-        current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
+        current_sessions = await _list_sessions_str_keys(client)
         session_list_duration = asyncio.get_event_loop().time() - start_time
         
         if session_id_str not in current_sessions:
@@ -4146,7 +4156,7 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
 
     try:
         # Check if session exists and get session info
-        current_sessions = await asyncio.to_thread(lambda: client.sessions.list)
+        current_sessions = await _list_sessions_str_keys(client)
         if session_id_str not in current_sessions:
             logger.error(f"Session {session_id} not found.")
             await _cleanup_session_lock(session_id_str)
@@ -4170,7 +4180,7 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
         
         # Verify termination
         await asyncio.sleep(1.0)  # Give MSF time to process termination
-        current_sessions_after = await asyncio.to_thread(lambda: client.sessions.list)
+        current_sessions_after = await _list_sessions_str_keys(client)
         
         session_terminated = session_id_str not in current_sessions_after
         result_messages = []
