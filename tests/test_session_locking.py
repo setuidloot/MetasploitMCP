@@ -22,6 +22,7 @@ from MetasploitMCP import (
     _session_locks_guard,
     _get_session_lock,
     _cleanup_session_lock,
+    _list_sessions_str_keys,
     session_shell_type,
     SESSION_LOCK_WAIT_TIMEOUT,
 )
@@ -130,6 +131,15 @@ class TestCleanupSessionLock:
         assert "999" not in _session_locks
 
 
+class TestSessionListNormalization:
+    @pytest.mark.asyncio
+    async def test_list_sessions_normalizes_int_keys(self, mock_asyncio_to_thread):
+        client, _ = _make_mock_client({1: {"type": "meterpreter"}})
+        normalized = await _list_sessions_str_keys(client)
+        assert "1" in normalized
+        assert normalized["1"]["type"] == "meterpreter"
+
+
 # ---------------------------------------------------------------------------
 # Concurrency tests for send_session_command
 # ---------------------------------------------------------------------------
@@ -223,6 +233,15 @@ class TestSendSessionCommandLocking:
         assert "not found" in result["message"]
         assert "99" not in session_shell_type
 
+    @pytest.mark.asyncio
+    async def test_int_keyed_session_lookup_succeeds(self, mock_asyncio_to_thread):
+        """RPC returns int session IDs; command lookup should still succeed."""
+        client, _ = _make_mock_client({1: {"type": "meterpreter", "target_host": "10.0.0.1"}})
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            result = await send_session_command(1, "whoami")
+
+        assert result["status"] == "success"
+
 
 # ---------------------------------------------------------------------------
 # Concurrency tests for terminate_session
@@ -307,6 +326,27 @@ class TestTerminateSessionLocking:
         assert result["status"] == "error"
         assert "not found" in result["message"]
         assert "50" not in session_shell_type
+
+    @pytest.mark.asyncio
+    async def test_terminate_int_keyed_session_succeeds(self, mock_asyncio_to_thread):
+        """terminate_session should handle int keys from sessions.list."""
+        client, session_obj = _make_mock_client({1: {"type": "meterpreter"}})
+        call_count = 0
+
+        async def mock_to_thread(func, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = func(*args, **kwargs)
+            if isinstance(result, dict) and call_count >= 3:
+                return {}
+            return result
+
+        with patch('MetasploitMCP.get_msf_client', return_value=client), \
+             patch('asyncio.to_thread', side_effect=mock_to_thread):
+            result = await terminate_session(1)
+
+        assert result["status"] == "success"
+        session_obj.stop.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
