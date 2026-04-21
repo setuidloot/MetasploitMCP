@@ -340,8 +340,9 @@ MSF_DOCS_PATH = os.environ.get('MSF_DOCS_PATH', '/opt/metasploit-docs/modules')
 # Timeouts and Polling Intervals (in seconds)
 DEFAULT_CONSOLE_READ_TIMEOUT = 15  # Default for quick console commands
 LONG_CONSOLE_READ_TIMEOUT = 60   # For commands like run/exploit/check
-SESSION_COMMAND_TIMEOUT = 15     # Default for commands within sessions
+SESSION_COMMAND_TIMEOUT = 60     # Default hard timeout for commands within sessions
 SESSION_READ_INACTIVITY_TIMEOUT = 15 # Timeout if no data from session
+DEFAULT_SESSION_INACTIVITY_TIMEOUT = 5  # Faster default for interactive session commands
 EXPLOIT_SESSION_POLL_TIMEOUT = 120 # Max time to wait for session after exploit job
 EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
 MODULE_RESULT_POLL_TIMEOUT = 300   # Max time to wait for auxiliary/post module completion
@@ -352,6 +353,7 @@ MAX_TOOL_TIMEOUT_SECONDS = 120  # Maximum timeout allowed for tool parameters (c
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
 SHELL_PROMPT_RE = re.compile(r'([#$>]|%)\s*$') # Matches common shell prompts (#, $, >, %) at end of line
+METERPRETER_PROMPT_RE = re.compile(r'meterpreter\s*>\s*$')
 MODULE_COMPLETE_RE = re.compile(rb'.*module execution completed$', re.DOTALL | re.MULTILINE)
 
 # Regular Expressions for Vulnerability Detection
@@ -689,6 +691,7 @@ async def run_command_safely(
     console: MsfConsole, 
     cmd: str, 
     execution_timeout: Optional[int] = None,
+    inactivity_timeout: Optional[int] = None,
     exit_terms_regexes: Optional[List[re.Pattern]] = None
 ) -> str:
     """
@@ -699,6 +702,7 @@ async def run_command_safely(
         console: The Metasploit console object (MsfConsole).
         cmd: The command to run.
         execution_timeout: Optional specific timeout for this command's execution phase.
+        inactivity_timeout: Optional no-output timeout before considering command complete.
         exit_terms_regexes: Optional list of compiled regex patterns. If provided, after a short
                            idle period, the output will be checked against these patterns. If any
                            match, the function will return early.
@@ -725,8 +729,13 @@ async def run_command_safely(
         output_buffer = b"" # Read as bytes to handle potential encoding issues and prompt matching
         start_time = asyncio.get_event_loop().time()
 
-        # Determine read timeout - use inactivity timeout as fallback
-        read_timeout = execution_timeout or (LONG_CONSOLE_READ_TIMEOUT if cmd.strip().startswith(("run", "exploit", "check")) else DEFAULT_CONSOLE_READ_TIMEOUT)
+        # Determine overall timeout and inactivity timeout independently.
+        read_timeout = execution_timeout or (
+            LONG_CONSOLE_READ_TIMEOUT
+            if cmd.strip().startswith(("run", "exploit", "check"))
+            else DEFAULT_CONSOLE_READ_TIMEOUT
+        )
+        read_inactivity_timeout = inactivity_timeout or read_timeout
         check_interval = 0.1 # Seconds between reads
         last_data_time = start_time
         
@@ -741,7 +750,7 @@ async def run_command_safely(
         total_bytes_read = 0
         timed_out = False  # Track if we exit due to timeout
         
-        logger.info(f"Starting console command execution: '{cmd}' (timeout: {read_timeout}s)"
+        logger.info(f"Starting console command execution: '{cmd}' (timeout: {read_timeout}s, inactivity: {read_inactivity_timeout}s)"
                    f"{', with exit terms checking' if exit_terms_regexes else ''}")
         
         while True:
@@ -839,9 +848,9 @@ async def run_command_safely(
                     break
 
             # Fallback Completion Check: Inactivity timeout
-            elif (current_time - last_data_time) > read_timeout:
+            elif (current_time - last_data_time) > read_inactivity_timeout:
                 inactivity_duration = current_time - last_data_time
-                logger.info(f"Console inactivity timeout ({read_timeout}s) reached for command '{cmd}' "
+                logger.info(f"Console inactivity timeout ({read_inactivity_timeout}s) reached for command '{cmd}' "
                           f"after {elapsed_time:.1f}s total. No data for {inactivity_duration:.1f}s. Assuming complete.")
                 break
 
@@ -1769,6 +1778,7 @@ async def _execute_module_console(
     command: str, # Typically 'exploit', 'run', or 'check'
     payload_spec: Optional[Union[str, Dict[str, Any]]] = None,
     timeout: int = LONG_CONSOLE_READ_TIMEOUT,
+    inactivity_timeout: Optional[int] = None,
     exit_terms_regexes: Optional[List[re.Pattern]] = None
 ) -> Dict[str, Any]:
     """Helper to execute a module synchronously via console."""
@@ -1888,7 +1898,13 @@ async def _execute_module_console(
                        f"(timeout: {timeout}s)")
             
             start_execution_time = asyncio.get_event_loop().time()
-            module_output = await run_command_safely(console, command, execution_timeout=timeout, exit_terms_regexes=exit_terms_regexes)
+            module_output = await run_command_safely(
+                console,
+                command,
+                execution_timeout=timeout,
+                inactivity_timeout=inactivity_timeout,
+                exit_terms_regexes=exit_terms_regexes,
+            )
             execution_duration = asyncio.get_event_loop().time() - start_execution_time
             
             # Check if the command timed out
@@ -2977,6 +2993,7 @@ async def run_exploit(
     run_as_job: bool = True,
     check_vulnerability: bool = False, # New option
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT, # Used only if run_as_job=False (max: 120s)
+    inactivity_timeout_seconds: int = SESSION_READ_INACTIVITY_TIMEOUT,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
@@ -3022,6 +3039,8 @@ async def run_exploit(
         run_as_job: If False, run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
         timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
+        inactivity_timeout_seconds: Max inactivity time for synchronous console output reads
+                                    (max: 120s, values above are capped).
 
     Returns:
         Dictionary with execution results (job_id, session_id, output) or error details.
@@ -3030,6 +3049,12 @@ async def run_exploit(
     if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    if inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(
+            f"inactivity_timeout_seconds {inactivity_timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, "
+            f"capping to {MAX_TOOL_TIMEOUT_SECONDS}s"
+        )
+        inactivity_timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
     logger.info(f"Request to run exploit '{module}'. Job: {run_as_job}, Check: {check_vulnerability}, Payload: {payload}")
 
@@ -3120,6 +3145,7 @@ async def run_exploit(
                 module_options=parsed_options,
                 command='check',
                 timeout=timeout_seconds,
+                inactivity_timeout=inactivity_timeout_seconds,
                 exit_terms_regexes=[
                     IS_VULNERABLE_RE,
                     IS_NOT_VULNERABLE_RE,
@@ -3230,6 +3256,7 @@ async def run_exploit(
                 command='exploit',
                 payload_spec=payload_spec,
                 timeout=timeout_seconds,
+                inactivity_timeout=inactivity_timeout_seconds,
                 exit_terms_regexes=[SESSION_OPENED_RE, FAILED_TO_LOAD_MODULE_RE]  # Return early when session is opened or module fails to load
             )
     except InvalidModuleError as e:
@@ -3263,6 +3290,7 @@ async def run_post_module(
     options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT,
+    inactivity_timeout_seconds: int = SESSION_READ_INACTIVITY_TIMEOUT,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
@@ -3275,6 +3303,8 @@ async def run_post_module(
                 or string format "VERBOSE=true". 'SESSION' will be added automatically.
         run_as_job: If False, run sync via console. If True, run async via RPC.
         timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
+        inactivity_timeout_seconds: Max inactivity time for synchronous console output reads
+                                    (max: 120s, values above are capped).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
@@ -3284,6 +3314,12 @@ async def run_post_module(
     if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    if inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(
+            f"inactivity_timeout_seconds {inactivity_timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, "
+            f"capping to {MAX_TOOL_TIMEOUT_SECONDS}s"
+        )
+        inactivity_timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
     logger.info(f"Request to run post module {module} on session {session_id}. Job: {run_as_job}")
     
@@ -3352,6 +3388,7 @@ async def run_post_module(
                 module_options=module_options,
                 command='run',
                 timeout=timeout_seconds,
+                inactivity_timeout=inactivity_timeout_seconds,
                 exit_terms_regexes=[FAILED_TO_LOAD_MODULE_RE]  # Return early when module fails to load
             )
         
@@ -3375,6 +3412,7 @@ async def run_auxiliary_module(
     options: Union[Dict[str, Any], str],
     run_as_job: bool = True, # Default False for scanners often makes sense
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT,
+    inactivity_timeout_seconds: int = SESSION_READ_INACTIVITY_TIMEOUT,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
@@ -3386,6 +3424,8 @@ async def run_auxiliary_module(
                 or string format "RHOSTS=192.168.1.1,USERNAME=admin". Prefer dict format.
         run_as_job: If False, run sync via console. If True, run async via RPC.
         timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
+        inactivity_timeout_seconds: Max inactivity time for synchronous console output reads
+                                    (max: 120s, values above are capped).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
@@ -3395,6 +3435,12 @@ async def run_auxiliary_module(
     if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    if inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(
+            f"inactivity_timeout_seconds {inactivity_timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, "
+            f"capping to {MAX_TOOL_TIMEOUT_SECONDS}s"
+        )
+        inactivity_timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
     logger.info(f"Request to run auxiliary module {module}. Job: {run_as_job}")
     
@@ -3448,6 +3494,7 @@ async def run_auxiliary_module(
                 module_options=module_options,
                 command='run',
                 timeout=timeout_seconds,
+                inactivity_timeout=inactivity_timeout_seconds,
                 exit_terms_regexes=[FAILED_TO_LOAD_MODULE_RE]  # Return early when module fails to load
             )
         
@@ -3508,16 +3555,91 @@ async def list_active_sessions() -> Dict[str, Any]:
         logger.exception("Unexpected error listing sessions.")
         return {"status": "error", "message": f"Unexpected error listing sessions: {e}"}
 
+async def _drive_meterpreter_command(
+    session: Any,
+    command: str,
+    timeout_seconds: int,
+    inactivity_timeout_seconds: int,
+    session_id: int,
+) -> Dict[str, Any]:
+    """Run a Meterpreter command with prompt detection and dual timeout controls."""
+    await asyncio.to_thread(lambda: session.write(command + "\n"))
+    output_buffer = ""
+    read_interval = 0.1
+    command_start = asyncio.get_event_loop().time()
+    last_data_time = command_start
+
+    while True:
+        now = asyncio.get_event_loop().time()
+        elapsed_time = now - command_start
+
+        if elapsed_time > timeout_seconds:
+            logger.warning(
+                f"Meterpreter command '{command}' timed out on session {session_id} "
+                f"after {elapsed_time:.1f}s"
+            )
+            break
+
+        chunk = await asyncio.to_thread(lambda: session.read())
+        if chunk:
+            output_buffer += chunk
+            last_data_time = now
+
+            if METERPRETER_PROMPT_RE.search(output_buffer):
+                return {
+                    "status": "success",
+                    "message": "Meterpreter command executed successfully.",
+                    "output": output_buffer,
+                    "reason": "prompt",
+                    "elapsed_seconds": elapsed_time,
+                }
+
+        elif (now - last_data_time) > inactivity_timeout_seconds and output_buffer:
+            inactivity_duration = now - last_data_time
+            logger.info(
+                f"Meterpreter inactivity timeout ({inactivity_timeout_seconds}s) reached "
+                f"for command '{command}' on session {session_id} after {elapsed_time:.1f}s "
+                f"(inactive for {inactivity_duration:.1f}s)."
+            )
+            return {
+                "status": "success",
+                "message": "Meterpreter command likely completed (inactivity).",
+                "output": output_buffer,
+                "reason": "inactivity",
+                "elapsed_seconds": elapsed_time,
+            }
+
+        await asyncio.sleep(read_interval)
+
+    try:
+        final_chunk = await asyncio.to_thread(lambda: session.read()) or ""
+        output_buffer += final_chunk
+    except Exception as read_err:
+        logger.warning(
+            f"Final read failed after timeout for Meterpreter command '{command}' "
+            f"on session {session_id}: {read_err}"
+        )
+
+    return {
+        "status": "timeout",
+        "message": f"Meterpreter command timed out after {timeout_seconds} seconds.",
+        "output": output_buffer,
+        "reason": "timeout",
+        "elapsed_seconds": asyncio.get_event_loop().time() - command_start,
+    }
+
+
 @mcp.tool()
 async def send_session_command(
     session_id: int,
     command: str,
     timeout_seconds: int = SESSION_COMMAND_TIMEOUT,
+    inactivity_timeout_seconds: int = DEFAULT_SESSION_INACTIVITY_TIMEOUT,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
     """
     Send a command to an active Metasploit session (Meterpreter or Shell) and get output.
-    Uses session.run_with_output for Meterpreter, and a prompt-aware loop for shells.
+    Uses prompt-aware read loops for both Meterpreter and shell sessions.
     The agent is responsible for parsing the raw output.
 
     In Meterpreter mode, to run a shell command, run `shell` to enter the shell mode first.
@@ -3526,17 +3648,26 @@ async def send_session_command(
     Args:
         session_id: ID of the target session.
         command: Command string to execute in the session.
-        timeout_seconds: Maximum time to wait for the command to complete (max: 120s, values above are capped).
+        timeout_seconds: Maximum total time to wait for the command to complete (max: 120s, values above are capped).
+        inactivity_timeout_seconds: Maximum idle time (no new output) before considering command complete
+                                    (max: 120s, values above are capped).
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
-        Dictionary with status ('success', 'error', 'timeout', 'busy') and raw command output.
+        Dictionary with status ('success', 'error', 'timeout', 'busy'), raw command output,
+        elapsed_seconds, and completion reason.
         A 'busy' status means another command is already running on this session — retry after a delay.
     """
     # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
     if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
         logger.warning(f"timeout_seconds {timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, capping to {MAX_TOOL_TIMEOUT_SECONDS}s")
         timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
+    if inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
+        logger.warning(
+            f"inactivity_timeout_seconds {inactivity_timeout_seconds}s exceeds max {MAX_TOOL_TIMEOUT_SECONDS}s, "
+            f"capping to {MAX_TOOL_TIMEOUT_SECONDS}s"
+        )
+        inactivity_timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS
     
     client = get_msf_client()
     logger.info(f"Sending command to session {session_id}: '{command}'")
@@ -3557,6 +3688,9 @@ async def send_session_command(
                 f"Session {session_id} is currently in use by another command. "
                 f"Waited {SESSION_LOCK_WAIT_TIMEOUT}s. Please retry after a brief delay."
             ),
+            "reason": "busy",
+            "elapsed_seconds": 0.0,
+            "output": "",
         }
 
     # Report initial progress if ctx available
@@ -3589,7 +3723,13 @@ async def send_session_command(
             logger.error(f"Session {session_id} not found in {len(current_sessions)} active sessions "
                         f"(retrieved in {session_list_duration:.1f}s)")
             await _cleanup_session_lock(session_id_str)
-            return {"status": "error", "message": f"Session {session_id} not found."}
+            return {
+                "status": "error",
+                "message": f"Session {session_id} not found.",
+                "reason": "error",
+                "elapsed_seconds": 0.0,
+                "output": "",
+            }
 
         session_info = current_sessions[session_id_str]
         session_type = session_info.get('type', 'unknown').lower() if isinstance(session_info, dict) else 'unknown'
@@ -3607,7 +3747,13 @@ async def send_session_command(
         if not session:
             logger.error(f"Failed to get session object for existing session {session_id} "
                         f"after {session_obj_duration:.1f}s")
-            return {"status": "error", "message": f"Error retrieving session {session_id} object."}
+            return {
+                "status": "error",
+                "message": f"Error retrieving session {session_id} object.",
+                "reason": "error",
+                "elapsed_seconds": 0.0,
+                "output": "",
+            }
         
         logger.debug(f"Session object retrieved in {session_obj_duration:.1f}s")
 
@@ -3615,6 +3761,8 @@ async def send_session_command(
         output = ""
         status = "error" # Default status
         message = "Command execution failed or type unknown."
+        reason = "error"
+        elapsed_seconds = 0.0
 
         if session_type == 'meterpreter':
             if session_shell_type.get(session_id_str) is None:
@@ -3625,30 +3773,38 @@ async def send_session_command(
                        f"(current mode: {current_mode}, timeout: {timeout_seconds}s)")
             
             command_start_time = asyncio.get_event_loop().time()
-            
             try:
-                # Use asyncio.wait_for to handle timeout manually since run_with_output doesn't support timeout parameter
                 if command == "shell":
                     if session_shell_type[session_id_str] == 'meterpreter':
                         logger.info(f"Switching session {session_id} from meterpreter to shell mode")
-                        # Wrap blocking calls in asyncio.to_thread with timeout to prevent event loop blocking
                         output = await asyncio.wait_for(
                             asyncio.to_thread(lambda: session.run_with_output(command, end_strs=['created.'])),
                             timeout=timeout_seconds
                         )
                         session_shell_type[session_id_str] = 'shell'
                         await asyncio.to_thread(lambda: session.read())  # Clear buffer
+                        status = "success"
+                        message = "Session switched to shell mode."
+                        reason = "prompt"
+                        elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                         logger.info(f"Session {session_id} successfully switched to shell mode")
                     else:
                         output = "You are already in shell mode."
+                        status = "success"
+                        message = "Session already in shell mode."
+                        reason = "mode"
+                        elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                         logger.debug(f"Session {session_id} already in shell mode")
                 elif command == "exit":
                     if session_shell_type[session_id_str] == 'meterpreter':
                         output = "You are already in meterpreter mode. No need to exit."
+                        status = "success"
+                        message = "Session already in meterpreter mode."
+                        reason = "mode"
+                        elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                         logger.debug(f"Session {session_id} already in meterpreter mode")
                     else:
                         logger.info(f"Switching session {session_id} from shell to meterpreter mode")
-                        # Wrap blocking calls in asyncio.to_thread with timeout to prevent event loop blocking
                         await asyncio.wait_for(
                             asyncio.to_thread(lambda: session.read()),  # Clear buffer
                             timeout=timeout_seconds
@@ -3658,38 +3814,56 @@ async def send_session_command(
                             timeout=timeout_seconds
                         )
                         session_shell_type[session_id_str] = 'meterpreter'
+                        status = "success"
+                        message = "Session switched to meterpreter mode."
+                        reason = "mode"
+                        elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                         logger.info(f"Session {session_id} successfully switched to meterpreter mode")
                 else:
                     logger.debug(f"Executing standard Meterpreter command: {command}")
-                    output = await asyncio.wait_for(
-                        asyncio.to_thread(lambda: session.run_with_output(command)),
-                        timeout=timeout_seconds
+                    meterpreter_result = await _drive_meterpreter_command(
+                        session=session,
+                        command=command,
+                        timeout_seconds=timeout_seconds,
+                        inactivity_timeout_seconds=inactivity_timeout_seconds,
+                        session_id=session_id,
                     )
-                
-                command_duration = asyncio.get_event_loop().time() - command_start_time
-                status = "success"
-                message = "Meterpreter command executed successfully."
-                logger.info(f"Meterpreter command '{command}' completed successfully in {command_duration:.1f}s "
-                          f"(output length: {len(output)} chars)")
+                    output = meterpreter_result.get("output", "")
+                    status = meterpreter_result.get("status", "error")
+                    message = meterpreter_result.get("message", "Meterpreter command failed.")
+                    reason = meterpreter_result.get("reason", "error")
+                    elapsed_seconds = meterpreter_result.get("elapsed_seconds", 0.0)
+
+                if elapsed_seconds <= 0:
+                    elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
+                logger.info(
+                    f"Meterpreter command '{command}' finished with status={status} "
+                    f"reason={reason} in {elapsed_seconds:.1f}s "
+                    f"(output length: {len(output)} chars)"
+                )
             except asyncio.TimeoutError:
                 status = "timeout"
+                reason = "timeout"
+                elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                 message = f"Meterpreter command timed out after {timeout_seconds} seconds."
                 logger.warning(f"Command '{command}' timed out on Meterpreter session {session_id}")
-                # Try a final read for potentially partial output
                 try:
                     output = await asyncio.to_thread(lambda: session.read()) or ""
-                except: pass
+                except Exception as read_err:
+                    logger.warning(f"Final Meterpreter read failed after timeout on session {session_id}: {read_err}")
             except (MsfRpcError, Exception) as run_err:
-                logger.error(f"Error during Meterpreter run_with_output for command '{command}': {run_err}")
+                logger.error(f"Error during Meterpreter command execution for '{command}': {run_err}")
                 message = f"Error executing Meterpreter command: {run_err}"
-                # Try a final read
+                reason = "error"
+                elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                 try:
                     output = await asyncio.to_thread(lambda: session.read()) or ""
-                except: pass
+                except Exception as read_err:
+                    logger.warning(f"Final Meterpreter read failed after error on session {session_id}: {read_err}")
 
         elif session_type == 'shell':
             logger.info(f"Executing shell command '{command}' on session {session_id} "
-                       f"(timeout: {timeout_seconds}s)")
+                       f"(timeout: {timeout_seconds}s, inactivity: {inactivity_timeout_seconds}s)")
             
             command_start_time = asyncio.get_event_loop().time()
             
@@ -3702,9 +3876,17 @@ async def send_session_command(
                     logger.info(f"Sent 'exit' to shell session {session_id}, assuming success without reading output.")
                     status = "success"
                     message = "Exit command sent to shell session."
+                    reason = "mode"
                     output = "(No output expected after exit)"
+                    elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                     # Skip the read loop for exit command
-                    return {"status": status, "message": message, "output": output}
+                    return {
+                        "status": status,
+                        "message": message,
+                        "output": output,
+                        "reason": reason,
+                        "elapsed_seconds": elapsed_seconds,
+                    }
 
                 # Proceed with read loop for non-exit commands
                 logger.debug(f"Starting output read loop for shell command '{command}'")
@@ -3732,6 +3914,8 @@ async def send_session_command(
                     if elapsed_time > timeout_seconds:
                         status = "timeout"
                         message = f"Shell command timed out after {timeout_seconds} seconds."
+                        reason = "timeout"
+                        elapsed_seconds = elapsed_time
                         logger.warning(f"Command '{command}' timed out on Shell session {session_id} "
                                      f"after {elapsed_time:.1f}s (chunks read: {total_chunks_read})")
                         break
@@ -3753,15 +3937,23 @@ async def send_session_command(
                              logger.info(f"Detected shell prompt for command '{command}' after {command_duration:.1f}s. Command complete.")
                              status = "success"
                              message = "Shell command executed successfully."
+                             reason = "prompt"
+                             elapsed_seconds = command_duration
                              break
-                    elif (now - last_data_time) > SESSION_READ_INACTIVITY_TIMEOUT:
-                         logger.debug(f"Shell inactivity timeout ({SESSION_READ_INACTIVITY_TIMEOUT}s) reached for command '{command}'. Assuming complete.")
+                    elif (now - last_data_time) > inactivity_timeout_seconds:
+                         logger.debug(f"Shell inactivity timeout ({inactivity_timeout_seconds}s) reached for command '{command}'. Assuming complete.")
                          status = "success" # Assume success if inactive after sending command
                          message = "Shell command likely completed (inactivity)."
+                         reason = "inactivity"
+                         elapsed_seconds = elapsed_time
                          break
 
                     await asyncio.sleep(read_interval)
                 output = output_buffer # Assign final buffer to output
+                if status == "success" and reason == "error":
+                    reason = "prompt"
+                if elapsed_seconds <= 0:
+                    elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
             except (MsfRpcError, Exception) as run_err:
                 # Special handling for errors after sending 'exit'
                 if command.strip().lower() == 'exit':
@@ -3769,14 +3961,18 @@ async def send_session_command(
                     status = "success" # Treat as success
                     message = f"Exit command sent, subsequent error likely due to session closing: {run_err}"
                     output = "(Error reading after exit, likely expected)"
+                    reason = "mode"
                 else:
                     logger.error(f"Error during Shell write/read loop for command '{command}': {run_err}")
                     message = f"Error executing Shell command: {run_err}"
                     output = output_buffer # Return potentially partial output
+                    reason = "error"
+                elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
 
         else: # Unknown session type
             logger.warning(f"Cannot execute command: Unknown session type '{session_type}' for session {session_id}")
             message = f"Cannot execute command: Unknown session type '{session_type}'."
+            reason = "error"
 
         # Report completion progress if ctx available
         if ctx:
@@ -3785,20 +3981,50 @@ async def send_session_command(
                 total=100,
                 message=f"Session command completed: {status}"
             )
-        return {"status": status, "message": message, "output": output}
+        return {
+            "status": status,
+            "message": message,
+            "output": output,
+            "reason": reason,
+            "elapsed_seconds": elapsed_seconds,
+        }
 
     except MsfRpcError as e:
         if "Session ID is not valid" in str(e):
              logger.error(f"RPC Error: Session {session_id} is invalid: {e}")
-             return {"status": "error", "message": f"Session {session_id} is not valid."}
+             return {
+                 "status": "error",
+                 "message": f"Session {session_id} is not valid.",
+                 "reason": "error",
+                 "elapsed_seconds": 0.0,
+                 "output": "",
+             }
         logger.error(f"MsfRpcError interacting with session {session_id}: {e}")
-        return {"status": "error", "message": f"Error interacting with session {session_id}: {e}"}
+        return {
+            "status": "error",
+            "message": f"Error interacting with session {session_id}: {e}",
+            "reason": "error",
+            "elapsed_seconds": 0.0,
+            "output": "",
+        }
     except KeyError: # May occur if session disappears between list and access
         logger.error(f"Session {session_id} likely disappeared (KeyError).")
-        return {"status": "error", "message": f"Session {session_id} not found or disappeared."}
+        return {
+            "status": "error",
+            "message": f"Session {session_id} not found or disappeared.",
+            "reason": "error",
+            "elapsed_seconds": 0.0,
+            "output": "",
+        }
     except Exception as e:
         logger.exception(f"Unexpected error sending command to session {session_id}.")
-        return {"status": "error", "message": f"Unexpected server error sending command: {e}"}
+        return {
+            "status": "error",
+            "message": f"Unexpected server error sending command: {e}",
+            "reason": "error",
+            "elapsed_seconds": 0.0,
+            "output": "",
+        }
     finally:
         session_lock.release()
         await keepalive.stop(send_completion=False)
