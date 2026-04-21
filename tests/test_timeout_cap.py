@@ -23,12 +23,18 @@ class TestTimeoutCapConstants:
         from MetasploitMCP import (
             LONG_CONSOLE_READ_TIMEOUT,
             SESSION_COMMAND_TIMEOUT,
+            SESSION_READ_INACTIVITY_TIMEOUT,
+            DEFAULT_SESSION_INACTIVITY_TIMEOUT,
             MAX_TOOL_TIMEOUT_SECONDS
         )
         assert LONG_CONSOLE_READ_TIMEOUT <= MAX_TOOL_TIMEOUT_SECONDS, \
             f"LONG_CONSOLE_READ_TIMEOUT ({LONG_CONSOLE_READ_TIMEOUT}s) exceeds max ({MAX_TOOL_TIMEOUT_SECONDS}s)"
         assert SESSION_COMMAND_TIMEOUT <= MAX_TOOL_TIMEOUT_SECONDS, \
             f"SESSION_COMMAND_TIMEOUT ({SESSION_COMMAND_TIMEOUT}s) exceeds max ({MAX_TOOL_TIMEOUT_SECONDS}s)"
+        assert SESSION_READ_INACTIVITY_TIMEOUT <= MAX_TOOL_TIMEOUT_SECONDS, \
+            f"SESSION_READ_INACTIVITY_TIMEOUT ({SESSION_READ_INACTIVITY_TIMEOUT}s) exceeds max ({MAX_TOOL_TIMEOUT_SECONDS}s)"
+        assert DEFAULT_SESSION_INACTIVITY_TIMEOUT <= MAX_TOOL_TIMEOUT_SECONDS, \
+            f"DEFAULT_SESSION_INACTIVITY_TIMEOUT ({DEFAULT_SESSION_INACTIVITY_TIMEOUT}s) exceeds max ({MAX_TOOL_TIMEOUT_SECONDS}s)"
     
     def test_max_tool_timeout_is_120(self):
         """Verify the max tool timeout is exactly 120 seconds"""
@@ -118,6 +124,8 @@ class TestTimeoutCapInSource:
             "run_exploit should check if timeout_seconds exceeds MAX_TOOL_TIMEOUT_SECONDS"
         assert 'timeout_seconds = MAX_TOOL_TIMEOUT_SECONDS' in run_exploit_source, \
             "run_exploit should cap timeout_seconds to MAX_TOOL_TIMEOUT_SECONDS"
+        assert 'inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in run_exploit_source, \
+            "run_exploit should cap inactivity_timeout_seconds"
     
     def test_run_post_module_uses_timeout_cap(self):
         """Verify run_post_module function checks timeout cap"""
@@ -136,6 +144,8 @@ class TestTimeoutCapInSource:
         
         assert 'timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in run_post_source, \
             "run_post_module should check if timeout_seconds exceeds MAX_TOOL_TIMEOUT_SECONDS"
+        assert 'inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in run_post_source, \
+            "run_post_module should cap inactivity_timeout_seconds"
     
     def test_run_auxiliary_module_uses_timeout_cap(self):
         """Verify run_auxiliary_module function checks timeout cap"""
@@ -154,6 +164,8 @@ class TestTimeoutCapInSource:
         
         assert 'timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in run_aux_source, \
             "run_auxiliary_module should check if timeout_seconds exceeds MAX_TOOL_TIMEOUT_SECONDS"
+        assert 'inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in run_aux_source, \
+            "run_auxiliary_module should cap inactivity_timeout_seconds"
     
     def test_send_session_command_uses_timeout_cap(self):
         """Verify send_session_command function checks timeout cap"""
@@ -172,3 +184,5 @@ class TestTimeoutCapInSource:
         
         assert 'timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in send_session_source, \
             "send_session_command should check if timeout_seconds exceeds MAX_TOOL_TIMEOUT_SECONDS"
+        assert 'inactivity_timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS' in send_session_source, \
+            "send_session_command should cap inactivity_timeout_seconds"

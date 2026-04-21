@@ -22,6 +22,8 @@ from MetasploitMCP import (
     _session_locks_guard,
     _get_session_lock,
     _cleanup_session_lock,
+    _list_sessions_str_keys,
+    _get_session_object_from_map,
     session_shell_type,
     SESSION_LOCK_WAIT_TIMEOUT,
 )
@@ -59,7 +61,7 @@ def _make_mock_client(sessions_dict=None):
 
     session_obj = Mock()
     session_obj.run_with_output = Mock(return_value="mock output")
-    session_obj.read = Mock(return_value="")
+    session_obj.read = Mock(return_value="mock output\nmeterpreter > ")
     session_obj.write = Mock()
     session_obj.stop = Mock()
     client.sessions.session = Mock(return_value=session_obj)
@@ -130,6 +132,28 @@ class TestCleanupSessionLock:
         assert "999" not in _session_locks
 
 
+class TestSessionListNormalization:
+    @pytest.mark.asyncio
+    async def test_list_sessions_normalizes_int_keys(self, mock_asyncio_to_thread):
+        client, _ = _make_mock_client({1: {"type": "meterpreter"}})
+        normalized = await _list_sessions_str_keys(client)
+        assert "1" in normalized
+        assert normalized["1"]["type"] == "meterpreter"
+
+    @pytest.mark.asyncio
+    async def test_get_session_object_uses_private_constructor_path(self, mock_asyncio_to_thread):
+        client, _ = _make_mock_client({1: {"type": "meterpreter"}})
+        normalized = await _list_sessions_str_keys(client)
+        sentinel_session = Mock()
+        client.sessions._create_session = Mock(return_value=sentinel_session)
+        client.sessions.session = Mock(side_effect=KeyError("broken public lookup"))
+
+        session = await _get_session_object_from_map(client, normalized, "1")
+
+        assert session is sentinel_session
+        client.sessions._create_session.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Concurrency tests for send_session_command
 # ---------------------------------------------------------------------------
@@ -145,14 +169,13 @@ class TestSendSessionCommandLocking:
 
         execution_order = []
 
-        original_run = session_obj.run_with_output
-
-        def slow_run(cmd, **kwargs):
+        def tracking_write(data):
+            cmd = data.strip()
             execution_order.append(f"start-{cmd}")
             execution_order.append(f"end-{cmd}")
-            return original_run(cmd, **kwargs)
+            return None
 
-        session_obj.run_with_output = slow_run
+        session_obj.write = Mock(side_effect=tracking_write)
 
         with patch('MetasploitMCP.get_msf_client', return_value=client):
             r1, r2 = await asyncio.gather(
@@ -222,6 +245,64 @@ class TestSendSessionCommandLocking:
         assert result["status"] == "error"
         assert "not found" in result["message"]
         assert "99" not in session_shell_type
+
+    @pytest.mark.asyncio
+    async def test_int_keyed_session_lookup_succeeds(self, mock_asyncio_to_thread):
+        """RPC returns int session IDs; command lookup should still succeed."""
+        client, _ = _make_mock_client({1: {"type": "meterpreter", "target_host": "10.0.0.1"}})
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            result = await send_session_command(1, "whoami")
+
+        assert result["status"] == "success"
+        assert result["reason"] in {"prompt", "inactivity"}
+
+    @pytest.mark.asyncio
+    async def test_meterpreter_command_returns_on_inactivity(self, mock_asyncio_to_thread):
+        """Meterpreter commands with output but no prompt should complete via inactivity."""
+        client, session_obj = _make_mock_client({
+            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+        })
+
+        read_chunks = ["uid=33(www-data)\n", "", "", ""]
+
+        def _read():
+            if read_chunks:
+                return read_chunks.pop(0)
+            return ""
+
+        session_obj.read = Mock(side_effect=_read)
+
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            result = await send_session_command(
+                1,
+                "getuid",
+                timeout_seconds=5,
+                inactivity_timeout_seconds=1,
+            )
+
+        assert result["status"] == "success"
+        assert result["reason"] == "inactivity"
+        assert "www-data" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_meterpreter_command_timeout_returns_partial_output(self, mock_asyncio_to_thread):
+        """Timeout should still return buffered output and mark reason=timeout."""
+        client, session_obj = _make_mock_client({
+            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+        })
+        session_obj.read = Mock(return_value="")
+
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            result = await send_session_command(
+                1,
+                "sysinfo",
+                timeout_seconds=1,
+                inactivity_timeout_seconds=1,
+            )
+
+        assert result["status"] == "timeout"
+        assert result["reason"] == "timeout"
+        assert "elapsed_seconds" in result
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +389,27 @@ class TestTerminateSessionLocking:
         assert "not found" in result["message"]
         assert "50" not in session_shell_type
 
+    @pytest.mark.asyncio
+    async def test_terminate_int_keyed_session_succeeds(self, mock_asyncio_to_thread):
+        """terminate_session should handle int keys from sessions.list."""
+        client, session_obj = _make_mock_client({1: {"type": "meterpreter"}})
+        call_count = 0
+
+        async def mock_to_thread(func, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = func(*args, **kwargs)
+            if isinstance(result, dict) and call_count >= 3:
+                return {}
+            return result
+
+        with patch('MetasploitMCP.get_msf_client', return_value=client), \
+             patch('asyncio.to_thread', side_effect=mock_to_thread):
+            result = await terminate_session(1)
+
+        assert result["status"] == "success"
+        session_obj.stop.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Lock release on error paths
@@ -323,7 +425,7 @@ class TestLockReleaseOnErrors:
         client, session_obj = _make_mock_client({
             "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
         })
-        session_obj.run_with_output = Mock(side_effect=MsfRpcError("RPC failure"))
+        session_obj.write = Mock(side_effect=MsfRpcError("RPC failure"))
 
         with patch('MetasploitMCP.get_msf_client', return_value=client):
             result = await send_session_command(1, "sysinfo")
@@ -339,7 +441,7 @@ class TestLockReleaseOnErrors:
         client, session_obj = _make_mock_client({
             "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
         })
-        session_obj.run_with_output = Mock(side_effect=RuntimeError("boom"))
+        session_obj.write = Mock(side_effect=RuntimeError("boom"))
 
         with patch('MetasploitMCP.get_msf_client', return_value=client):
             result = await send_session_command(1, "sysinfo")
@@ -360,11 +462,12 @@ class TestLockReleaseOnErrors:
             result = func(*args, **kwargs)
             return result
 
-        session_obj.run_with_output = Mock(side_effect=asyncio.TimeoutError)
+        session_obj.read = Mock(return_value="")
 
         with patch('MetasploitMCP.get_msf_client', return_value=client), \
              patch('asyncio.to_thread', side_effect=slow_to_thread):
             result = await send_session_command(1, "sysinfo", timeout_seconds=1)
 
+        assert result["status"] == "timeout"
         lock = await _get_session_lock("1")
         assert not lock.locked(), "Lock should be released after command timeout"
