@@ -3564,13 +3564,22 @@ async def run_auxiliary_module(
 
 def _hide_inactivity_timeout_from_signature(func):
     """Hide internal inactivity timeout arg from inspect-based schema tests."""
-    sig = inspect.signature(func)
+    # FastMCP may wrap callables in FunctionTool objects on newer versions.
+    # Extract the underlying callable for inspect.signature compatibility.
+    target = getattr(func, "fn", None) or getattr(func, "func", None) or func
+    sig = inspect.signature(target)
     filtered_params = [
         param
         for param in sig.parameters.values()
         if param.name != "inactivity_timeout_seconds"
     ]
-    func.__signature__ = sig.replace(parameters=filtered_params)
+    filtered_sig = sig.replace(parameters=filtered_params)
+    target.__signature__ = filtered_sig
+    try:
+        func.__signature__ = filtered_sig
+    except Exception:
+        # Some wrappers may not allow assignment; underlying callable already updated.
+        pass
 
 
 _hide_inactivity_timeout_from_signature(run_exploit)
