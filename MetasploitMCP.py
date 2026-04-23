@@ -346,9 +346,11 @@ DEFAULT_CONSOLE_READ_TIMEOUT = 15  # Default for quick console commands
 LONG_CONSOLE_READ_TIMEOUT = 60   # For commands like run/exploit/check
 SESSION_COMMAND_TIMEOUT = 60     # Default hard timeout for commands within sessions
 SESSION_READ_INACTIVITY_TIMEOUT = 15 # Timeout if no data from session
-DEFAULT_SESSION_INACTIVITY_TIMEOUT = 5  # Faster default for interactive session commands
+DEFAULT_SESSION_INACTIVITY_TIMEOUT = 10  # Default inactivity wait for interactive session commands
 EXPLOIT_SESSION_POLL_TIMEOUT = 120 # Max time to wait for session after exploit job
 EXPLOIT_SESSION_POLL_INTERVAL = 3  # How often to check for session
+UUID_MISSING_GRACE_POLLS = 3  # Consecutive missing polls before considering UUID lost
+UUID_MISSING_GRACE_SECONDS = 6  # Minimum elapsed time before considering UUID lost
 MODULE_RESULT_POLL_TIMEOUT = 300   # Max time to wait for auxiliary/post module completion
 MODULE_RESULT_POLL_INTERVAL = 2    # How often to check module.running_stats
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
@@ -356,8 +358,11 @@ MAX_TOOL_TIMEOUT_SECONDS = 120  # Maximum timeout allowed for tool parameters (c
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(rb'\x01\x02msf\d+\x01\x02 \x01\x02> \x01\x02') # Matches the msf6 > prompt with control chars
-SHELL_PROMPT_RE = re.compile(r'([#$>]|%)\s*$') # Matches common shell prompts (#, $, >, %) at end of line
+SHELL_PROMPT_RE = re.compile(
+    r'(?mi)^(?!\s*meterpreter\s*>\s*$)[^\n]*(?:[#$%]\s*|[^\s]>\s*)$'
+)  # Match common shell prompts, but avoid meterpreter prompt and bare ">"
 METERPRETER_PROMPT_RE = re.compile(r'meterpreter\s*>\s*$')
+METERPRETER_ERROR_RE = re.compile(r'(?m)^\s*\[-\]\s+.+$')
 MODULE_COMPLETE_RE = re.compile(rb'.*module execution completed$', re.DOTALL | re.MULTILINE)
 
 # Regular Expressions for Vulnerability Detection
@@ -651,7 +656,7 @@ async def get_msf_console() -> MsfConsole:
         console_object = await asyncio.to_thread(lambda: client.consoles.console())
 
         # Get ID using .cid attribute
-        if isinstance(console_object, MsfConsole) and hasattr(console_object, 'cid'):
+        if hasattr(console_object, 'cid'):
             console_id_val = getattr(console_object, 'cid')
             console_id_str = str(console_id_val) if console_id_val is not None else None
             if not console_id_str:
@@ -1498,6 +1503,39 @@ async def _set_module_options(module_obj: Any, options: Dict[str, Any], module_t
         
         raise ValueError(error_msg)
 
+async def _get_module_error_from_events(client: Any, uuid_str: str) -> Optional[str]:
+    """Query db.events for a module_error event matching the given module UUID."""
+    try:
+        events_response = await asyncio.to_thread(lambda: client.call('db.events', [{}]))
+        if not isinstance(events_response, dict):
+            return None
+
+        events = events_response.get('events', [])
+        if not isinstance(events, list):
+            return None
+
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                continue
+            if event.get('name') != 'module_error':
+                continue
+
+            info = event.get('info', {})
+            if not isinstance(info, dict):
+                continue
+            if str(info.get('module_uuid')) != uuid_str:
+                continue
+
+            exception_value = info.get('exception')
+            if exception_value is None:
+                return None
+            return exception_value if isinstance(exception_value, str) else str(exception_value)
+    except Exception as e:
+        logger.debug(f"Failed to query module_error from db.events for UUID {uuid_str}: {e}")
+        return None
+
+    return None
+
 async def _execute_module_rpc(
     module_type: str,
     module_name: str, # Can be full path or base name
@@ -1602,8 +1640,10 @@ async def _execute_module_rpc(
         
         if module_type == 'exploit' and uuid and not is_handler_module:
              start_time = asyncio.get_event_loop().time()
+             uuid_str = str(uuid)
              logger.info(f"Exploit job {job_id} (UUID: {uuid}) started. Polling for session (timeout: {EXPLOIT_SESSION_POLL_TIMEOUT}s)...")
              poll_count = 0
+             missing_uuid_polls = 0
              while (asyncio.get_event_loop().time() - start_time) < EXPLOIT_SESSION_POLL_TIMEOUT:
                  poll_count += 1
                  elapsed = asyncio.get_event_loop().time() - start_time
@@ -1652,13 +1692,107 @@ async def _execute_module_rpc(
                      for s_id, s_info in sessions_list.items():
                          # Ensure comparison is robust (uuid might be str or bytes, info dict keys too)
                          s_id_str = str(s_id)
-                         if isinstance(s_info, dict) and str(s_info.get('exploit_uuid')) == str(uuid):
+                         if isinstance(s_info, dict) and str(s_info.get('exploit_uuid')) == uuid_str:
                              found_session_id = s_id # Keep original type from list keys
                              logger.info(f"Found matching session {found_session_id} for job {job_id} (UUID: {uuid}) after {int(elapsed)}s and {poll_count} checks")
                              break # Exit inner loop
 
                      if found_session_id is not None:
                          break # Exit outer loop
+
+                     # Detect completed/failed exploit jobs quickly by observing module running stats.
+                     # This avoids waiting the full timeout when AutoCheck aborts immediately.
+                     running_stats = await asyncio.to_thread(lambda: client.call('module.running_stats'))
+                     if isinstance(running_stats, dict):
+                         results_list = running_stats.get('results', [])
+                         running_list = running_stats.get('running', [])
+                         waiting_list = running_stats.get('waiting', [])
+                         uuid_present = (
+                             uuid_str in running_list
+                             or uuid_str in waiting_list
+                             or uuid_str in results_list
+                         )
+
+                         if uuid_str in results_list:
+                             missing_uuid_polls = 0
+                             error_detail = await _get_module_error_from_events(client, uuid_str)
+                             if error_detail:
+                                 logger.error(
+                                     "Exploit job %s (UUID: %s) completed with module_error: %s",
+                                     job_id,
+                                     uuid,
+                                     error_detail,
+                                 )
+                                 return {
+                                     "status": "error",
+                                     "message": f"Exploit job {job_id} failed: {error_detail}",
+                                     "job_id": job_id,
+                                     "uuid": uuid,
+                                     "job_error": str(error_detail),
+                                     "session_id": None,
+                                     "module": full_module_path,
+                                     "options": module_options,
+                                     "payload_name": payload_name_for_log,
+                                     "payload_options": payload_options_for_log,
+                                     "exploit_error": str(error_detail),
+                                 }
+
+                             logger.warning(
+                                 "Exploit job %s (UUID: %s) completed without session; allowing grace check.",
+                                 job_id,
+                                 uuid,
+                             )
+                             await asyncio.sleep(EXPLOIT_SESSION_POLL_INTERVAL * 2)
+                             sessions_list = await asyncio.to_thread(lambda: client.sessions.list)
+                             for s_id, s_info in sessions_list.items():
+                                 if isinstance(s_info, dict) and str(s_info.get('exploit_uuid')) == uuid_str:
+                                     found_session_id = s_id
+                                     logger.info(
+                                         "Found matching session %s for completed job %s (UUID: %s) during grace check.",
+                                         found_session_id,
+                                         job_id,
+                                         uuid,
+                                     )
+                                     break
+                             break
+
+                         if not uuid_present:
+                             missing_uuid_polls += 1
+                             logger.debug(
+                                 "UUID %s missing from module.running_stats (poll=%s, elapsed=%.1fs); checking db.events for failure.",
+                                 uuid_str,
+                                 missing_uuid_polls,
+                                 elapsed,
+                             )
+                             error_detail = await _get_module_error_from_events(client, uuid_str)
+                             if error_detail:
+                                 return {
+                                     "status": "error",
+                                     "message": f"Exploit job {job_id} failed: {error_detail}",
+                                     "job_id": job_id,
+                                     "uuid": uuid,
+                                     "job_error": str(error_detail),
+                                     "session_id": None,
+                                     "module": full_module_path,
+                                     "options": module_options,
+                                     "payload_name": payload_name_for_log,
+                                     "payload_options": payload_options_for_log,
+                                     "exploit_error": str(error_detail),
+                                 }
+                             if (
+                                 missing_uuid_polls >= UUID_MISSING_GRACE_POLLS
+                                 and elapsed >= UUID_MISSING_GRACE_SECONDS
+                             ):
+                                 logger.warning(
+                                     "UUID %s missing from module.running_stats for %s polls over %.1fs; treating job %s as no longer trackable.",
+                                     uuid_str,
+                                     missing_uuid_polls,
+                                     elapsed,
+                                     job_id,
+                                 )
+                                 break
+                         else:
+                             missing_uuid_polls = 0
 
                      # Optional: Check if job died prematurely
                      # job_info = await asyncio.to_thread(lambda: client.jobs.info(str(job_id)))
@@ -1672,7 +1806,21 @@ async def _execute_module_rpc(
                  await asyncio.sleep(EXPLOIT_SESSION_POLL_INTERVAL)
 
              if found_session_id is None:
-                 logger.warning(f"Polling timeout ({EXPLOIT_SESSION_POLL_TIMEOUT}s) reached for job {job_id}, no matching session found after {poll_count} checks.")
+                 elapsed_total = asyncio.get_event_loop().time() - start_time
+                 if elapsed_total >= (EXPLOIT_SESSION_POLL_TIMEOUT - EXPLOIT_SESSION_POLL_INTERVAL):
+                     logger.warning(
+                         "Polling timeout (%ss) reached for job %s, no matching session found after %s checks.",
+                         EXPLOIT_SESSION_POLL_TIMEOUT,
+                         job_id,
+                         poll_count,
+                     )
+                 else:
+                     logger.warning(
+                         "Stopped polling early for job %s after %.1fs (%s checks), no matching session found.",
+                         job_id,
+                         elapsed_total,
+                         poll_count,
+                     )
         elif is_handler_module:
              logger.info(f"Handler job {job_id} started successfully. No session polling needed - handler will wait for connections.")
 
@@ -1752,6 +1900,8 @@ async def _execute_module_rpc(
                  message += f" Session {found_session_id} created."
             else:
                  message += " No session detected within timeout."
+                 if not bool(module_options.get("ForceExploit", False)):
+                     message += ' If AutoCheck blocked exploitation, retry with ForceExploit=true (or set force_exploit=True).'
                  status = "warning" # Indicate job started but session didn't appear
 
                  # If there's a job ID and a payload LPORT set, kill the job
@@ -2585,6 +2735,18 @@ async def list_payloads(platform: str = "", arch: str = "", compatible_with: str
                 # Module not found
                 logger.warning(f"Exploit module '{compatible_with}' not found: {ve}")
                 return [f"Error: Exploit module '{compatible_with}' not found. Please verify the module name using list_exploits."]
+            except AttributeError as attr_err:
+                logger.warning(
+                    "Exploit module '%s' does not expose compatible payloads: %s",
+                    compatible_with,
+                    attr_err,
+                )
+                return [
+                    (
+                        f"Error: Exploit module '{compatible_with}' does not expose compatible payloads. "
+                        "Use list_payloads without compatible_with to enumerate all payloads."
+                    )
+                ]
         else:
             # Add timeout to prevent hanging on slow/unresponsive MSF server
             logger.debug(f"Calling client.modules.payloads with {RPC_CALL_TIMEOUT}s timeout...")
@@ -3029,6 +3191,7 @@ async def run_exploit(
     payload_options: Optional[Union[Dict[str, Any], str]] = None,
     run_as_job: bool = True,
     check_vulnerability: bool = False, # New option
+    force_exploit: bool = True,
     timeout_seconds: int = LONG_CONSOLE_READ_TIMEOUT, # Used only if run_as_job=False (max: 120s)
     inactivity_timeout_seconds: int = SESSION_READ_INACTIVITY_TIMEOUT,
     ctx: Optional[Context] = None,
@@ -3075,6 +3238,10 @@ async def run_exploit(
                         AUTOMATICALLY creates the listener on the specified LHOST/LPORT.
         run_as_job: If False, run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
+        force_exploit: If True (default), automatically sets ForceExploit=true and
+                       AutoCheck=false unless already provided in options. This avoids
+                       AutoCheck aborting exploitation when check results are inconclusive.
+                       Set False to preserve module defaults.
         timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
         inactivity_timeout_seconds: Max inactivity time for synchronous console output reads
                                     (max: 120s, values above are capped).
@@ -3114,6 +3281,14 @@ async def run_exploit(
         parsed_options = _parse_options_gracefully(options)
     except ValueError as e:
         return {"status": "error", "message": f"Invalid options format: {e}"}
+
+    if force_exploit:
+        if 'ForceExploit' not in parsed_options:
+            parsed_options['ForceExploit'] = True
+            logger.info("Auto-set ForceExploit=true for exploit execution.")
+        if 'AutoCheck' not in parsed_options:
+            parsed_options['AutoCheck'] = False
+            logger.info("Auto-set AutoCheck=false for exploit execution.")
 
     # Parse payload options gracefully
     try:
@@ -3174,6 +3349,7 @@ async def run_exploit(
                 logger.error(f"Invalid LPORT value '{lport_value}': {e}", exc_info=True)
                 return {"status": "error", "message": f"Invalid LPORT value '{lport_value}': {e}"}
 
+    check_output_for_result = None
     if check_vulnerability:
         logger.info(f"Performing vulnerability check first for {module}...")
         try:
@@ -3196,6 +3372,7 @@ async def run_exploit(
                 f"Vulnerability check result: {check_result.get('status')} - {check_result.get('message')}"
             )
             output = check_result.get("module_output", "")
+            check_output_for_result = output
             output_bytes = output.encode('utf-8', errors='replace')
 
             if FAILED_TO_LOAD_MODULE_RE.search(output_bytes):
@@ -3225,19 +3402,32 @@ async def run_exploit(
             is_not_vulnerable = bool(IS_NOT_VULNERABLE_RE.search(output_bytes))
             if check_result.get('status') == "errror":
                 logger.warning(f"Error from metasploit: {check_result}")
-                return {
-                    "status": "aborted",
-                    "message": f"Check indicates a failure: {check_result.get('message')}",
-                    "check_output": check_result.get("module_output"),
-                }
+                if force_exploit:
+                    logger.warning(
+                        "Check failed for %s (%s), but force_exploit=True so exploit execution will continue.",
+                        module,
+                        check_result.get('message'),
+                    )
+                else:
+                    return {
+                        "status": "aborted",
+                        "message": f"Check indicates a failure: {check_result.get('message')}",
+                        "check_output": check_result.get("module_output"),
+                    }
 
             if is_not_vulnerable or (not is_vulnerable and check_result.get("status") == "error"):
-                logger.warning(f"Check indicates target is likely not vulnerable to {module}.")
-                return {
-                    "status": "aborted",
-                    "message": "Check indicates target not vulnerable. Exploit not attempted.",
-                    "check_output": check_result.get("module_output"),
-                }
+                if force_exploit:
+                    logger.warning(
+                        "Check indicates target may not be vulnerable to %s, but force_exploit=True so exploit execution will continue.",
+                        module,
+                    )
+                else:
+                    logger.warning(f"Check indicates target is likely not vulnerable to {module}.")
+                    return {
+                        "status": "aborted",
+                        "message": "Check indicates target not vulnerable. Exploit not attempted.",
+                        "check_output": check_result.get("module_output"),
+                    }
             if not is_vulnerable:
                 logger.warning(f"Check result inconclusive for {module}. Proceeding with exploit attempt cautiously.")
             else:
@@ -3327,6 +3517,8 @@ async def run_exploit(
                 "Stageless payload selected for a webapp exploit. "
                 "If target behavior is unstable, retry with a staged payload."
             )
+    if check_output_for_result is not None:
+        result["check_output"] = check_output_for_result
 
     logger.info(f"Full outcome of exploit '{module}': {result}")
     
@@ -3642,6 +3834,11 @@ async def _drive_meterpreter_command(
     read_interval = 0.1
     command_start = asyncio.get_event_loop().time()
     last_data_time = command_start
+    total_chunks_read = 0
+    total_bytes_read = 0
+
+    def _extract_meterpreter_errors(output: str) -> List[str]:
+        return [line.strip() for line in METERPRETER_ERROR_RE.findall(output)]
 
     while True:
         now = asyncio.get_event_loop().time()
@@ -3656,30 +3853,72 @@ async def _drive_meterpreter_command(
 
         chunk = await asyncio.to_thread(lambda: session.read())
         if chunk:
+            total_chunks_read += 1
+            total_bytes_read += len(chunk)
             output_buffer += chunk
             last_data_time = now
 
             if METERPRETER_PROMPT_RE.search(output_buffer):
+                meterpreter_errors = _extract_meterpreter_errors(output_buffer)
+                if meterpreter_errors:
+                    return {
+                        "status": "error",
+                        "message": "Meterpreter returned one or more error lines.",
+                        "output": output_buffer,
+                        "reason": "meterpreter_error",
+                        "meterpreter_errors": meterpreter_errors,
+                        "chunks_read": total_chunks_read,
+                        "bytes_read": total_bytes_read,
+                        "elapsed_seconds": elapsed_time,
+                    }
                 return {
                     "status": "success",
                     "message": "Meterpreter command executed successfully.",
                     "output": output_buffer,
                     "reason": "prompt",
+                    "chunks_read": total_chunks_read,
+                    "bytes_read": total_bytes_read,
                     "elapsed_seconds": elapsed_time,
                 }
 
-        elif (now - last_data_time) > inactivity_timeout_seconds and output_buffer:
+        elif (now - last_data_time) > inactivity_timeout_seconds:
             inactivity_duration = now - last_data_time
             logger.info(
                 f"Meterpreter inactivity timeout ({inactivity_timeout_seconds}s) reached "
                 f"for command '{command}' on session {session_id} after {elapsed_time:.1f}s "
                 f"(inactive for {inactivity_duration:.1f}s)."
             )
+            if not output_buffer:
+                return {
+                    "status": "empty",
+                    "message": "No command output observed before inactivity timeout.",
+                    "output": "",
+                    "reason": "no_output",
+                    "chunks_read": total_chunks_read,
+                    "bytes_read": total_bytes_read,
+                    "elapsed_seconds": elapsed_time,
+                }
+
+            meterpreter_errors = _extract_meterpreter_errors(output_buffer)
+            if meterpreter_errors:
+                return {
+                    "status": "error",
+                    "message": "Meterpreter returned one or more error lines.",
+                    "output": output_buffer,
+                    "reason": "meterpreter_error",
+                    "meterpreter_errors": meterpreter_errors,
+                    "chunks_read": total_chunks_read,
+                    "bytes_read": total_bytes_read,
+                    "elapsed_seconds": elapsed_time,
+                }
+
             return {
                 "status": "success",
                 "message": "Meterpreter command likely completed (inactivity).",
                 "output": output_buffer,
                 "reason": "inactivity",
+                "chunks_read": total_chunks_read,
+                "bytes_read": total_bytes_read,
                 "elapsed_seconds": elapsed_time,
             }
 
@@ -3687,6 +3926,9 @@ async def _drive_meterpreter_command(
 
     try:
         final_chunk = await asyncio.to_thread(lambda: session.read()) or ""
+        if final_chunk:
+            total_chunks_read += 1
+            total_bytes_read += len(final_chunk)
         output_buffer += final_chunk
     except Exception as read_err:
         logger.warning(
@@ -3694,11 +3936,15 @@ async def _drive_meterpreter_command(
             f"on session {session_id}: {read_err}"
         )
 
+    meterpreter_errors = _extract_meterpreter_errors(output_buffer)
     return {
         "status": "timeout",
         "message": f"Meterpreter command timed out after {timeout_seconds} seconds.",
         "output": output_buffer,
         "reason": "timeout",
+        "meterpreter_errors": meterpreter_errors,
+        "chunks_read": total_chunks_read,
+        "bytes_read": total_bytes_read,
         "elapsed_seconds": asyncio.get_event_loop().time() - command_start,
     }
 
@@ -3728,6 +3974,8 @@ async def _drive_shell_command(
                 "message": "Exit command sent to shell session.",
                 "output": "(No output expected after exit)",
                 "reason": "mode",
+                "chunks_read": 0,
+                "bytes_read": 0,
                 "elapsed_seconds": asyncio.get_event_loop().time() - command_start_time,
             }
 
@@ -3736,6 +3984,7 @@ async def _drive_shell_command(
         last_data_time = start_time
         read_interval = 0.1
         total_chunks_read = 0
+        total_bytes_read = 0
         progress_interval = 5
         last_progress_time = start_time
 
@@ -3763,6 +4012,9 @@ async def _drive_shell_command(
                     "message": f"Shell command timed out after {timeout_seconds} seconds.",
                     "output": output_buffer,
                     "reason": "timeout",
+                    "meterpreter_errors": [line.strip() for line in METERPRETER_ERROR_RE.findall(output_buffer)],
+                    "chunks_read": total_chunks_read,
+                    "bytes_read": total_bytes_read,
                     "elapsed_seconds": elapsed_time,
                 }
 
@@ -3770,6 +4022,7 @@ async def _drive_shell_command(
             if chunk:
                 chunk_size = len(chunk)
                 total_chunks_read += 1
+                total_bytes_read += chunk_size
                 output_buffer += chunk
                 last_data_time = now
 
@@ -3781,6 +4034,18 @@ async def _drive_shell_command(
 
                 if SHELL_PROMPT_RE.search(output_buffer):
                     command_duration = now - command_start_time
+                    meterpreter_errors = [line.strip() for line in METERPRETER_ERROR_RE.findall(output_buffer)]
+                    if meterpreter_errors:
+                        return {
+                            "status": "error",
+                            "message": "Shell command returned Meterpreter error output.",
+                            "output": output_buffer,
+                            "reason": "meterpreter_error",
+                            "meterpreter_errors": meterpreter_errors,
+                            "chunks_read": total_chunks_read,
+                            "bytes_read": total_bytes_read,
+                            "elapsed_seconds": command_duration,
+                        }
                     logger.info(
                         f"Detected shell prompt for command '{command}' after {command_duration:.1f}s. "
                         "Command complete."
@@ -3790,9 +4055,33 @@ async def _drive_shell_command(
                         "message": "Shell command executed successfully.",
                         "output": output_buffer,
                         "reason": "prompt",
+                        "chunks_read": total_chunks_read,
+                        "bytes_read": total_bytes_read,
                         "elapsed_seconds": command_duration,
                     }
             elif (now - last_data_time) > inactivity_timeout_seconds:
+                meterpreter_errors = [line.strip() for line in METERPRETER_ERROR_RE.findall(output_buffer)]
+                if not output_buffer:
+                    return {
+                        "status": "empty",
+                        "message": "No command output observed before inactivity timeout.",
+                        "output": "",
+                        "reason": "no_output",
+                        "chunks_read": total_chunks_read,
+                        "bytes_read": total_bytes_read,
+                        "elapsed_seconds": elapsed_time,
+                    }
+                if meterpreter_errors:
+                    return {
+                        "status": "error",
+                        "message": "Shell command returned Meterpreter error output.",
+                        "output": output_buffer,
+                        "reason": "meterpreter_error",
+                        "meterpreter_errors": meterpreter_errors,
+                        "chunks_read": total_chunks_read,
+                        "bytes_read": total_bytes_read,
+                        "elapsed_seconds": elapsed_time,
+                    }
                 logger.debug(
                     f"Shell inactivity timeout ({inactivity_timeout_seconds}s) reached "
                     f"for command '{command}'. Assuming complete."
@@ -3802,6 +4091,8 @@ async def _drive_shell_command(
                     "message": "Shell command likely completed (inactivity).",
                     "output": output_buffer,
                     "reason": "inactivity",
+                    "chunks_read": total_chunks_read,
+                    "bytes_read": total_bytes_read,
                     "elapsed_seconds": elapsed_time,
                 }
 
@@ -3820,6 +4111,8 @@ async def _drive_shell_command(
                 ),
                 "output": "(Error reading after exit, likely expected)",
                 "reason": "mode",
+                "chunks_read": 0,
+                "bytes_read": 0,
                 "elapsed_seconds": asyncio.get_event_loop().time() - command_start_time,
             }
 
@@ -3829,6 +4122,9 @@ async def _drive_shell_command(
             "message": f"Error executing Shell command: {run_err}",
             "output": output_buffer,
             "reason": "error",
+            "meterpreter_errors": [line.strip() for line in METERPRETER_ERROR_RE.findall(output_buffer)],
+            "chunks_read": 0,
+            "bytes_read": len(output_buffer),
             "elapsed_seconds": asyncio.get_event_loop().time() - command_start_time,
         }
 
@@ -3858,8 +4154,9 @@ async def send_session_command(
         ctx: MCP Context for progress reporting (optional, injected by FastMCP).
 
     Returns:
-        Dictionary with status ('success', 'error', 'timeout', 'busy'), raw command output,
-        elapsed_seconds, and completion reason.
+        Dictionary with status ('success', 'empty', 'error', 'timeout', 'busy'), raw command output,
+        elapsed_seconds, completion reason, read telemetry (chunks_read/bytes_read),
+        and any surfaced meterpreter_errors.
         A 'busy' status means another command is already running on this session — retry after a delay.
     """
     # Cap timeout_seconds at MAX_TOOL_TIMEOUT_SECONDS (120s)
@@ -3967,6 +4264,9 @@ async def send_session_command(
         message = "Command execution failed or type unknown."
         reason = "error"
         elapsed_seconds = 0.0
+        chunks_read = 0
+        bytes_read = 0
+        meterpreter_errors: List[str] = []
 
         if session_type == 'meterpreter':
             if session_shell_type.get(session_id_str) is None:
@@ -3986,7 +4286,16 @@ async def send_session_command(
                             timeout=timeout_seconds
                         )
                         session_shell_type[session_id_str] = 'shell'
-                        await asyncio.to_thread(lambda: session.read())  # Clear buffer
+                        shell_preamble = await asyncio.to_thread(lambda: session.read()) or ""
+                        if shell_preamble:
+                            logger.debug(
+                                "Captured shell entry preamble for session %s: %s",
+                                session_id,
+                                shell_preamble.strip(),
+                            )
+                            output = f"{output}{shell_preamble}"
+                            chunks_read = 1
+                        bytes_read = len(output)
                         status = "success"
                         message = "Session switched to shell mode."
                         reason = "prompt"
@@ -4037,6 +4346,9 @@ async def send_session_command(
                     message = shell_result.get("message", "Shell command failed.")
                     reason = shell_result.get("reason", "error")
                     elapsed_seconds = shell_result.get("elapsed_seconds", 0.0)
+                    chunks_read = shell_result.get("chunks_read", 0)
+                    bytes_read = shell_result.get("bytes_read", len(output))
+                    meterpreter_errors = shell_result.get("meterpreter_errors", [])
                 else:
                     logger.debug(f"Executing standard Meterpreter command: {command}")
                     meterpreter_result = await _drive_meterpreter_command(
@@ -4051,6 +4363,9 @@ async def send_session_command(
                     message = meterpreter_result.get("message", "Meterpreter command failed.")
                     reason = meterpreter_result.get("reason", "error")
                     elapsed_seconds = meterpreter_result.get("elapsed_seconds", 0.0)
+                    chunks_read = meterpreter_result.get("chunks_read", 0)
+                    bytes_read = meterpreter_result.get("bytes_read", len(output))
+                    meterpreter_errors = meterpreter_result.get("meterpreter_errors", [])
 
                 if elapsed_seconds <= 0:
                     elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
@@ -4067,6 +4382,8 @@ async def send_session_command(
                 logger.warning(f"Command '{command}' timed out on Meterpreter session {session_id}")
                 try:
                     output = await asyncio.to_thread(lambda: session.read()) or ""
+                    bytes_read = len(output)
+                    meterpreter_errors = [line.strip() for line in METERPRETER_ERROR_RE.findall(output)]
                 except Exception as read_err:
                     logger.warning(f"Final Meterpreter read failed after timeout on session {session_id}: {read_err}")
             except (MsfRpcError, Exception) as run_err:
@@ -4076,6 +4393,8 @@ async def send_session_command(
                 elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                 try:
                     output = await asyncio.to_thread(lambda: session.read()) or ""
+                    bytes_read = len(output)
+                    meterpreter_errors = [line.strip() for line in METERPRETER_ERROR_RE.findall(output)]
                 except Exception as read_err:
                     logger.warning(f"Final Meterpreter read failed after error on session {session_id}: {read_err}")
 
@@ -4094,6 +4413,9 @@ async def send_session_command(
             message = shell_result.get("message", "Shell command failed.")
             reason = shell_result.get("reason", "error")
             elapsed_seconds = shell_result.get("elapsed_seconds", 0.0)
+            chunks_read = shell_result.get("chunks_read", 0)
+            bytes_read = shell_result.get("bytes_read", len(output))
+            meterpreter_errors = shell_result.get("meterpreter_errors", [])
 
         else: # Unknown session type
             logger.warning(f"Cannot execute command: Unknown session type '{session_type}' for session {session_id}")
@@ -4113,6 +4435,9 @@ async def send_session_command(
             "output": output,
             "reason": reason,
             "elapsed_seconds": elapsed_seconds,
+            "chunks_read": chunks_read,
+            "bytes_read": bytes_read,
+            "meterpreter_errors": meterpreter_errors,
         }
 
     except MsfRpcError as e:

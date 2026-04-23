@@ -34,7 +34,6 @@ mcp_server_fastmcp = Mock()
 mcp_server_fastmcp.FastMCP = MockFastMCP
 sys.modules['mcp.server.fastmcp'] = mcp_server_fastmcp
 sys.modules['mcp.server.sse'] = Mock()
-sys.modules['mcp.server.session'] = Mock()
 
 # Mock pymetasploit3 module
 sys.modules['pymetasploit3.msfrpc'] = Mock()
@@ -99,55 +98,62 @@ class TestGetLocalIpAddresses:
 class TestValidateBindAddress:
     """Test the validate_bind_address function."""
     
-    def test_validate_wildcard_ipv4(self):
+    @pytest.mark.asyncio
+    async def test_validate_wildcard_ipv4(self):
         """Test validation of IPv4 wildcard address."""
-        is_valid, error_msg = validate_bind_address("0.0.0.0")
+        is_valid, error_msg = await validate_bind_address("0.0.0.0")
         assert is_valid is True
         assert error_msg == ""
 
-    def test_validate_wildcard_ipv6(self):
+    @pytest.mark.asyncio
+    async def test_validate_wildcard_ipv6(self):
         """Test validation of IPv6 wildcard address."""
-        is_valid, error_msg = validate_bind_address("::")
+        is_valid, error_msg = await validate_bind_address("::")
         assert is_valid is True
         assert error_msg == ""
 
-    def test_validate_empty_address(self):
+    @pytest.mark.asyncio
+    async def test_validate_empty_address(self):
         """Test validation of empty address."""
-        is_valid, error_msg = validate_bind_address("")
+        is_valid, error_msg = await validate_bind_address("")
         assert is_valid is False
         assert "cannot be empty" in error_msg
 
-    def test_validate_invalid_format(self):
+    @pytest.mark.asyncio
+    async def test_validate_invalid_format(self):
         """Test validation of invalid IP format."""
-        is_valid, error_msg = validate_bind_address("invalid.ip.address")
+        is_valid, error_msg = await validate_bind_address("invalid.ip.address")
         assert is_valid is False
         assert "Invalid IP address format" in error_msg
 
-    def test_validate_local_address(self):
+    @pytest.mark.asyncio
+    async def test_validate_local_address(self):
         """Test validation of local IP address."""
         with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100', '::1']):
-            is_valid, error_msg = validate_bind_address("192.168.1.100")
+            is_valid, error_msg = await validate_bind_address("192.168.1.100")
             assert is_valid is True
             assert error_msg == ""
 
-    def test_validate_non_local_address(self):
+    @pytest.mark.asyncio
+    async def test_validate_non_local_address(self):
         """Test validation of non-local IP address."""
         with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100', '::1']):
-            is_valid, error_msg = validate_bind_address("8.8.8.8")
+            is_valid, error_msg = await validate_bind_address("8.8.8.8")
             assert is_valid is False
             assert "not configured on this machine" in error_msg
             assert "Available addresses:" in error_msg
 
-    def test_validate_loopback_addresses(self):
+    @pytest.mark.asyncio
+    async def test_validate_loopback_addresses(self):
         """Test validation of loopback addresses."""
         with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '::1']):
             # IPv4 loopback
-            is_valid, error_msg = validate_bind_address("127.0.0.1")
+            is_valid, error_msg = await validate_bind_address("127.0.0.1")
             assert is_valid is True
             assert error_msg == ""
             
             # IPv6 loopback
-            is_valid, error_msg = validate_bind_address("::1")
+            is_valid, error_msg = await validate_bind_address("::1")
             assert is_valid is True
             assert error_msg == ""
 
@@ -176,10 +182,10 @@ class TestBindAddressIntegration:
         
         with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
             result = await MetasploitMCP.start_listener(
-                payload_type="windows/meterpreter/reverse_tcp",
+                payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100",
                 lport=4444,
-                reverse_listener_bind_address="127.0.0.1"
+                reverselistenerbindaddress="127.0.0.1"
             )
             
             assert result["status"] == "success"
@@ -191,10 +197,10 @@ class TestBindAddressIntegration:
         
         with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
             result = await MetasploitMCP.start_listener(
-                payload_type="windows/meterpreter/reverse_tcp",
+                payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100",
                 lport=4444,
-                reverse_listener_bind_address="8.8.8.8"  # Invalid - not local
+                reverselistenerbindaddress="8.8.8.8"  # Invalid - not local
             )
             
             assert result["status"] == "error"
@@ -206,10 +212,10 @@ class TestBindAddressIntegration:
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
         result = await MetasploitMCP.start_listener(
-            payload_type="windows/meterpreter/reverse_tcp",
+            payload="windows/meterpreter/reverse_tcp",
             lhost="192.168.1.100",
             lport=4444,
-            reverse_listener_bind_address="0.0.0.0"  # Wildcard should always be valid
+            reverselistenerbindaddress="0.0.0.0"  # Wildcard should always be valid
         )
         
         assert result["status"] == "success"
@@ -220,7 +226,7 @@ class TestBindAddressIntegration:
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
         result = await MetasploitMCP.start_listener(
-            payload_type="windows/meterpreter/reverse_tcp",
+            payload="windows/meterpreter/reverse_tcp",
             lhost="192.168.1.100",
             lport=4444
             # No reverse_listener_bind_address provided - should default to 0.0.0.0
@@ -234,10 +240,10 @@ class TestBindAddressIntegration:
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
         result = await MetasploitMCP.start_listener(
-            payload_type="windows/meterpreter/reverse_tcp",
+            payload="windows/meterpreter/reverse_tcp",
             lhost="192.168.1.100",
             lport=4444,
-            reverse_listener_bind_port=99999  # Invalid port
+            reverselistenerbindport=99999  # Invalid port
         )
         
         assert result["status"] == "error"
@@ -255,10 +261,10 @@ class TestBindAddressIntegration:
                         mock_open.return_value.__enter__.return_value.write = Mock()
                         
                         result = await MetasploitMCP.generate_payload(
-                            payload_type="windows/meterpreter/reverse_tcp",
-                            format_type="exe",
+                            payload="windows/meterpreter/reverse_tcp",
+                            format="exe",
                             options={"LHOST": "192.168.1.100", "LPORT": 4444},
-                            reverse_listener_bind_address="127.0.0.1"
+                            reverselistenerbindaddress="127.0.0.1"
                         )
                         
                         assert result["status"] == "success"
@@ -270,10 +276,10 @@ class TestBindAddressIntegration:
         
         with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
             result = await MetasploitMCP.generate_payload(
-                payload_type="windows/meterpreter/reverse_tcp",
-                format_type="exe",
+                payload="windows/meterpreter/reverse_tcp",
+                format="exe",
                 options={"LHOST": "192.168.1.100", "LPORT": 4444},
-                reverse_listener_bind_address="8.8.8.8"  # Invalid - not local
+                reverselistenerbindaddress="8.8.8.8"  # Invalid - not local
             )
             
             assert result["status"] == "error"
@@ -290,8 +296,8 @@ class TestBindAddressIntegration:
                     mock_open.return_value.__enter__.return_value.write = Mock()
                     
                     result = await MetasploitMCP.generate_payload(
-                        payload_type="windows/meterpreter/reverse_tcp",
-                        format_type="exe",
+                        payload="windows/meterpreter/reverse_tcp",
+                        format="exe",
                         options={"LHOST": "192.168.1.100", "LPORT": 4444}
                         # No reverse_listener_bind_address provided - should default to 0.0.0.0
                     )
@@ -304,10 +310,10 @@ class TestBindAddressIntegration:
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
         result = await MetasploitMCP.generate_payload(
-            payload_type="windows/meterpreter/reverse_tcp",
-            format_type="exe",
+            payload="windows/meterpreter/reverse_tcp",
+            format="exe",
             options={"LHOST": "192.168.1.100", "LPORT": 4444},
-            reverse_listener_bind_port=99999  # Invalid port
+            reverselistenerbindport=99999  # Invalid port
         )
         
         assert result["status"] == "error"

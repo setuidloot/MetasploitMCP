@@ -166,15 +166,15 @@ class TestMetasploitMCPClient:
         """Test run_exploit wrapper method."""
         with patch.object(client, 'call_tool', new=AsyncMock(return_value={"success": True})) as mock_call:
             await client.run_exploit(
-                module_name="exploit/test",
+                module="exploit/test",
                 options={"RHOSTS": "10.0.0.1"},
-                payload_name="test/payload"
+                payload="test/payload"
             )
             
             mock_call.assert_called_once_with("run_exploit", {
-                "module_name": "exploit/test",
+                "module": "exploit/test",
                 "options": {"RHOSTS": "10.0.0.1"},
-                "payload_name": "test/payload"
+                "payload": "test/payload"
             })
     
     @pytest.mark.asyncio
@@ -200,13 +200,13 @@ class TestMetasploitMCPClient:
         """Test start_listener wrapper method."""
         with patch.object(client, 'call_tool', new=AsyncMock(return_value={"job_id": 1})) as mock_call:
             await client.start_listener(
-                payload_type="linux/x86/meterpreter/reverse_tcp",
+                payload="linux/x86/meterpreter/reverse_tcp",
                 lhost="10.0.0.1",
                 lport=4444
             )
             
             mock_call.assert_called_once_with("start_listener", {
-                "payload_type": "linux/x86/meterpreter/reverse_tcp",
+                "payload": "linux/x86/meterpreter/reverse_tcp",
                 "lhost": "10.0.0.1",
                 "lport": 4444
             })
