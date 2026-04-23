@@ -71,6 +71,20 @@ from MetasploitMCP import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_msf_client_instance():
+    """Provide a default MSF client for console helpers."""
+    client = Mock()
+    console = Mock()
+    console.cid = "test-console"
+    console.read.return_value = {"data": "", "prompt": "", "busy": False}
+    console.write.return_value = True
+    client.consoles.console.return_value = console
+    client.consoles.destroy.return_value = "destroyed"
+    with patch.object(sys.modules['MetasploitMCP'], "_msf_client_instance", client):
+        yield client
+
+
 class TestRegexPatterns:
     """Test the global regex patterns for vulnerability and session detection."""
 

@@ -46,26 +46,28 @@ sys.modules['pymetasploit3.msfrpc'] = Mock()
 import MetasploitMCP
 from MetasploitMCP import check_port_available
 
+pytestmark = pytest.mark.asyncio
+
 
 class TestCheckPortAvailableReturnType:
     """Test that check_port_available always returns Tuple[bool, str]."""
     
-    def test_return_type_is_tuple(self):
+    async def test_return_type_is_tuple(self):
         """Test that the function returns a tuple."""
-        result = check_port_available(8080, '0.0.0.0')
+        result = await check_port_available(8080, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
     
-    def test_return_type_has_correct_types(self):
+    async def test_return_type_has_correct_types(self):
         """Test that the tuple contains bool and str."""
-        result = check_port_available(8080, '0.0.0.0')
+        result = await check_port_available(8080, '0.0.0.0')
         is_available, error_msg = result
         assert isinstance(is_available, bool), f"First element should be bool, got {type(is_available)}"
         assert isinstance(error_msg, str), f"Second element should be str, got {type(error_msg)}"
     
-    def test_invalid_port_returns_tuple(self):
+    async def test_invalid_port_returns_tuple(self):
         """Test that invalid port returns Tuple[bool, str]."""
-        result = check_port_available(0, '0.0.0.0')
+        result = await check_port_available(0, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -74,9 +76,9 @@ class TestCheckPortAvailableReturnType:
         assert is_available is False
         assert "Invalid port" in error_msg
     
-    def test_invalid_port_too_high_returns_tuple(self):
+    async def test_invalid_port_too_high_returns_tuple(self):
         """Test that port > 65535 returns Tuple[bool, str]."""
-        result = check_port_available(70000, '0.0.0.0')
+        result = await check_port_available(70000, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -86,7 +88,7 @@ class TestCheckPortAvailableReturnType:
         assert "Invalid port" in error_msg
     
     @patch('MetasploitMCP.psutil.net_connections')
-    def test_port_in_use_via_psutil_returns_tuple(self, mock_net_connections):
+    async def test_port_in_use_via_psutil_returns_tuple(self, mock_net_connections):
         """Test that when psutil detects port in use, it returns Tuple[bool, str]."""
         # Mock a connection using the port
         mock_conn = Mock()
@@ -96,7 +98,7 @@ class TestCheckPortAvailableReturnType:
         mock_conn.raddr = None
         mock_net_connections.return_value = [mock_conn]
         
-        result = check_port_available(4444, '0.0.0.0')
+        result = await check_port_available(4444, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -107,7 +109,7 @@ class TestCheckPortAvailableReturnType:
     
     @patch('MetasploitMCP.psutil.net_connections')
     @patch('socket.socket')
-    def test_port_available_returns_tuple(self, mock_socket, mock_net_connections):
+    async def test_port_available_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when port is available, it returns Tuple[bool, str]."""
         # Mock psutil to return no connections
         mock_net_connections.return_value = []
@@ -116,7 +118,7 @@ class TestCheckPortAvailableReturnType:
         mock_sock = MagicMock()
         mock_socket.return_value.__enter__.return_value = mock_sock
         
-        result = check_port_available(8080, '0.0.0.0')
+        result = await check_port_available(8080, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -127,7 +129,7 @@ class TestCheckPortAvailableReturnType:
     
     @patch('MetasploitMCP.psutil.net_connections')
     @patch('socket.socket')
-    def test_port_unavailable_socket_bind_returns_tuple(self, mock_socket, mock_net_connections):
+    async def test_port_unavailable_socket_bind_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when socket.bind fails, it returns Tuple[bool, str]."""
         # Mock psutil to return no connections (fall through to socket check)
         mock_net_connections.return_value = []
@@ -137,7 +139,7 @@ class TestCheckPortAvailableReturnType:
         mock_sock.bind.side_effect = OSError("Address already in use")
         mock_socket.return_value.__enter__.return_value = mock_sock
         
-        result = check_port_available(4444, '0.0.0.0')
+        result = await check_port_available(4444, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -148,7 +150,7 @@ class TestCheckPortAvailableReturnType:
     
     @patch('MetasploitMCP.psutil.net_connections')
     @patch('socket.socket')
-    def test_psutil_access_denied_fallback_returns_tuple(self, mock_socket, mock_net_connections):
+    async def test_psutil_access_denied_fallback_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when psutil raises AccessDenied, fallback returns Tuple[bool, str]."""
         import psutil
         # Mock psutil to raise AccessDenied
@@ -158,7 +160,7 @@ class TestCheckPortAvailableReturnType:
         mock_sock = MagicMock()
         mock_socket.return_value.__enter__.return_value = mock_sock
         
-        result = check_port_available(8080, '0.0.0.0')
+        result = await check_port_available(8080, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -167,7 +169,7 @@ class TestCheckPortAvailableReturnType:
     
     @patch('MetasploitMCP.psutil.net_connections')
     @patch('socket.socket')
-    def test_exception_during_socket_bind_returns_tuple(self, mock_socket, mock_net_connections):
+    async def test_exception_during_socket_bind_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when an exception occurs during socket bind, it returns Tuple[bool, str]."""
         # Mock psutil to return no connections
         mock_net_connections.return_value = []
@@ -177,7 +179,7 @@ class TestCheckPortAvailableReturnType:
         mock_sock.bind.side_effect = Exception("Unexpected error")
         mock_socket.return_value.__enter__.return_value = mock_sock
         
-        result = check_port_available(4444, '0.0.0.0')
+        result = await check_port_available(4444, '0.0.0.0')
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
         is_available, error_msg = result
@@ -186,7 +188,7 @@ class TestCheckPortAvailableReturnType:
         assert is_available is False
         assert "Error checking port" in error_msg
     
-    def test_all_return_paths_are_tuples(self):
+    async def test_all_return_paths_are_tuples(self):
         """Comprehensive test to ensure all code paths return Tuple[bool, str]."""
         test_cases = [
             # (port, host, description)
@@ -202,7 +204,7 @@ class TestCheckPortAvailableReturnType:
                     mock_sock = MagicMock()
                     mock_socket.return_value.__enter__.return_value = mock_sock
                     
-                    result = check_port_available(port, host)
+                    result = await check_port_available(port, host)
                     assert isinstance(result, tuple), \
                         f"Failed for {description}: Expected tuple, got {type(result)}"
                     assert len(result) == 2, \
@@ -217,20 +219,20 @@ class TestCheckPortAvailableReturnType:
 class TestCheckPortAvailableUnpacking:
     """Test that check_port_available can be correctly unpacked as (bool, str)."""
     
-    def test_can_unpack_result(self):
+    async def test_can_unpack_result(self):
         """Test that the result can be unpacked into two variables."""
-        port_available, port_error = check_port_available(8080, '0.0.0.0')
+        port_available, port_error = await check_port_available(8080, '0.0.0.0')
         assert isinstance(port_available, bool)
         assert isinstance(port_error, str)
     
-    def test_unpacking_matches_usage_pattern(self):
+    async def test_unpacking_matches_usage_pattern(self):
         """Test that unpacking matches the actual usage pattern in the codebase."""
         # This is how it's used in the codebase:
         # port_available, port_error = check_port_available(bind_port, bind_address)
         bind_port = 4444
         bind_address = '0.0.0.0'
         
-        port_available, port_error = check_port_available(bind_port, bind_address)
+        port_available, port_error = await check_port_available(bind_port, bind_address)
         
         # Verify types
         assert isinstance(port_available, bool)
@@ -246,24 +248,24 @@ class TestCheckPortAvailableUnpacking:
 class TestValidateBindAddressReturnType:
     """Test that validate_bind_address always returns Tuple[bool, str] (similar function)."""
     
-    def test_validate_bind_address_return_type_is_tuple(self):
+    async def test_validate_bind_address_return_type_is_tuple(self):
         """Test that validate_bind_address returns a tuple."""
         from MetasploitMCP import validate_bind_address
         
-        result = validate_bind_address("0.0.0.0")
+        result = await validate_bind_address("0.0.0.0")
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
     
-    def test_validate_bind_address_return_type_has_correct_types(self):
+    async def test_validate_bind_address_return_type_has_correct_types(self):
         """Test that the tuple contains bool and str."""
         from MetasploitMCP import validate_bind_address
         
-        result = validate_bind_address("0.0.0.0")
+        result = await validate_bind_address("0.0.0.0")
         is_valid, error_msg = result
         assert isinstance(is_valid, bool), f"First element should be bool, got {type(is_valid)}"
         assert isinstance(error_msg, str), f"Second element should be str, got {type(error_msg)}"
     
-    def test_validate_bind_address_all_paths_return_tuple(self):
+    async def test_validate_bind_address_all_paths_return_tuple(self):
         """Test all code paths return Tuple[bool, str]."""
         from MetasploitMCP import validate_bind_address
         
@@ -277,7 +279,7 @@ class TestValidateBindAddressReturnType:
         
         for address, description in test_cases:
             with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '::1']):
-                result = validate_bind_address(address)
+                result = await validate_bind_address(address)
                 assert isinstance(result, tuple), \
                     f"Failed for {description}: Expected tuple, got {type(result)}"
                 assert len(result) == 2, \
