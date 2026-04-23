@@ -159,8 +159,8 @@ class TestDocstringConsistency:
         docstring = get_function_description(MetasploitMCP.run_exploit)
         
         # Check that key parameters are mentioned in docstring
-        assert "module_name" in docstring, "module_name parameter should be documented"
-        assert "payload_name" in docstring, "payload_name parameter should be documented"
+        assert "module" in docstring, "module parameter should be documented"
+        assert "payload" in docstring, "payload parameter should be documented"
         assert "payload_options" in docstring, "payload_options parameter should be documented"
     
     def test_start_listener_parameters_documented(self):
@@ -168,7 +168,7 @@ class TestDocstringConsistency:
         docstring = get_function_description(MetasploitMCP.start_listener)
         
         # Check that key parameters are mentioned in docstring
-        assert "payload_type" in docstring, "payload_type parameter should be documented"
+        assert "payload" in docstring, "payload parameter should be documented"
         assert "lhost" in docstring, "lhost parameter should be documented"
         assert "lport" in docstring, "lport parameter should be documented"
     
@@ -177,8 +177,8 @@ class TestDocstringConsistency:
         docstring = get_function_description(MetasploitMCP.generate_payload)
         
         # Check that key parameters are mentioned in docstring
-        assert "payload_type" in docstring, "payload_type parameter should be documented"
-        assert "format_type" in docstring, "format_type parameter should be documented"
+        assert "payload" in docstring, "payload parameter should be documented"
+        assert "format" in docstring, "format parameter should be documented"
         assert "options" in docstring, "options parameter should be documented"
 
 

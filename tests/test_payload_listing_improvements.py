@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Tests for the enhanced payload listing functionality.
-Tests the new exploit_module parameter and improved error messages.
+Tests the compatible_with parameter and improved error messages.
 """
 
 import pytest
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 
 def test_list_payloads_signature():
-    """Test that list_payloads has the correct signature with exploit_module and search_term parameters."""
+    """Test that list_payloads has the correct signature with compatible_with and search parameters."""
     # Mock dependencies before importing
     sys.modules['fastmcp'] = Mock()
     sys.modules['pymetasploit3.msfrpc'] = Mock()
@@ -54,8 +54,8 @@ def test_list_payloads_signature():
         # Check for expected parameters
         assert 'platform' in params, "platform parameter should exist"
         assert 'arch' in params, "arch parameter should exist"
-        assert 'exploit_module' in params, "exploit_module parameter should be added"
-        assert 'search_term' in params, "search_term parameter should be added"
+        assert 'compatible_with' in params, "compatible_with parameter should be added"
+        assert 'search' in params, "search parameter should be added"
         
         print(f"✓ list_payloads has correct signature: {params}")
     except Exception as e:
@@ -72,10 +72,10 @@ def test_invalid_payload_error_message_format():
     
     # Simulated error message
     error_msg = f"Invalid payload specified: {payload_name}. "
-    error_msg += f"To view compatible payloads for this exploit, use: list_payloads(exploit_module='{module_name}'). "
+    error_msg += f"To view compatible payloads for this exploit, use: list_payloads(compatible_with='{module_name}'). "
     
     assert "list_payloads" in error_msg
-    assert "exploit_module" in error_msg
+    assert "compatible_with" in error_msg
     assert module_name in error_msg
     assert payload_name in error_msg
     
@@ -91,27 +91,27 @@ def test_console_payload_error_message_format():
     # Simulated console error message
     error_msg = f"Error during setup command '{cmd}': {setup_output}"
     base_module_name = module_name
-    error_msg += f"\n\nTo view compatible payloads for this exploit, use: list_payloads(exploit_module='{base_module_name}')"
+    error_msg += f"\n\nTo view compatible payloads for this exploit, use: list_payloads(compatible_with='{base_module_name}')"
     
     assert "list_payloads" in error_msg
-    assert "exploit_module" in error_msg
+    assert "compatible_with" in error_msg
     assert base_module_name in error_msg
     
     print(f"✓ Console error message format is correct")
 
 
 def test_compatible_payloads_access_pattern():
-    """Test that we correctly access the compatible_payloads attribute."""
+    """Test that we correctly access the payloads attribute."""
     # Create a mock module object
     mock_module = Mock()
     mock_module.fullname = "exploit/windows/smb/ms17_010_eternalblue"
-    mock_module.compatible_payloads = [
+    mock_module.payloads = [
         'windows/x64/meterpreter/reverse_tcp',
         'windows/x64/shell/reverse_tcp'
     ]
     
-    # Simulate accessing compatible_payloads
-    payloads = mock_module.compatible_payloads
+    # Simulate accessing payloads
+    payloads = mock_module.payloads
     
     assert isinstance(payloads, list)
     assert len(payloads) == 2
@@ -121,17 +121,15 @@ def test_compatible_payloads_access_pattern():
 
 
 def test_attribute_error_handling():
-    """Test that AttributeError is handled when compatible_payloads doesn't exist."""
-    # Create a mock module without compatible_payloads
-    mock_module = Mock()
-    mock_module.fullname = "exploit/unix/ftp/vsftpd_234_backdoor"
+    """Test that AttributeError is handled when payloads doesn't exist."""
+    class SimpleModule:
+        fullname = "exploit/unix/ftp/vsftpd_234_backdoor"
     
-    # Remove the compatible_payloads attribute
-    del mock_module.compatible_payloads
+    mock_module = SimpleModule()
     
-    # Test that accessing it raises AttributeError
+    # Test that accessing a missing attribute raises AttributeError
     with pytest.raises(AttributeError):
-        _ = mock_module.compatible_payloads
+        _ = mock_module.payloads
     
     print(f"✓ AttributeError handling pattern is correct")
 
@@ -157,7 +155,7 @@ def test_module_name_extraction():
 
 
 def test_search_term_simple_match():
-    """Test that search_term filters payloads with simple substring matching."""
+    """Test that search filters payloads with simple substring matching."""
     # Sample payloads
     all_payloads = [
         'windows/x64/meterpreter/reverse_tcp',
@@ -168,18 +166,18 @@ def test_search_term_simple_match():
     ]
     
     # Test simple search
-    search_term = 'meterpreter'
-    filtered = [p for p in all_payloads if search_term.lower() in p.lower()]
+    search = 'meterpreter'
+    filtered = [p for p in all_payloads if search.lower() in p.lower()]
     
     assert len(filtered) == 2
     assert 'windows/x64/meterpreter/reverse_tcp' in filtered
     assert 'linux/x86/meterpreter/reverse_tcp' in filtered
     
-    print(f"✓ Simple search_term filtering works: '{search_term}' found {len(filtered)} payloads")
+    print(f"✓ Simple search filtering works: '{search}' found {len(filtered)} payloads")
 
 
 def test_search_term_wildcard_match():
-    """Test that search_term supports wildcard matching with *."""
+    """Test that search supports wildcard matching with *."""
     import re
     
     # Sample payloads
@@ -192,8 +190,8 @@ def test_search_term_wildcard_match():
     ]
     
     # Test wildcard search
-    search_term = '*/reverse*'
-    pattern = re.compile(search_term.lower().replace('*', '.*'))
+    search = '*/reverse*'
+    pattern = re.compile(search.lower().replace('*', '.*'))
     filtered = [p for p in all_payloads if pattern.search(p.lower())]
     
     assert len(filtered) == 5  # All payloads have 'reverse' in the name
@@ -201,11 +199,11 @@ def test_search_term_wildcard_match():
     assert 'windows/reverse_powershell' in filtered
     assert 'windows/x64/meterpreter/reverse_tcp' in filtered
     
-    print(f"✓ Wildcard search_term filtering works: '{search_term}' found {len(filtered)} payloads")
+    print(f"✓ Wildcard search filtering works: '{search}' found {len(filtered)} payloads")
 
 
 def test_search_term_path_pattern():
-    """Test that search_term can match payload path patterns like 'linux/x86'."""
+    """Test that search can match payload path patterns like 'linux/x86'."""
     # Sample payloads
     all_payloads = [
         'unix/reverse_bash',
@@ -216,25 +214,29 @@ def test_search_term_path_pattern():
     ]
     
     # Test path pattern search
-    search_term = 'linux/x86'
-    filtered = [p for p in all_payloads if search_term.lower() in p.lower()]
+    search = 'linux/x86'
+    filtered = [p for p in all_payloads if search.lower() in p.lower()]
     
     assert len(filtered) == 1
     assert 'linux/x86/meterpreter/reverse_tcp' in filtered
     
-    print(f"✓ Path pattern search_term filtering works: '{search_term}' found {len(filtered)} payloads")
+    print(f"✓ Path pattern search filtering works: '{search}' found {len(filtered)} payloads")
 
 
 def test_incompatible_payloads_error_message():
-    """Test that error message is returned when exploit module doesn't support compatible_payloads."""
+    """Test that error message is returned when exploit module doesn't expose payloads."""
     exploit_module = 'exploit/multi/http/apache_mod_cgi_bash_env_exec'
     
     # Expected error message format
-    expected_error = f"Error: Exploit module '{exploit_module}' doesn't support querying compatible payloads. Use list_payloads without exploit_module parameter to search all payloads, then manually select appropriate payloads for your exploit."
+    expected_error = (
+        f"Error: Exploit module '{exploit_module}' does not expose compatible payloads. "
+        "Use list_payloads without compatible_with to search all payloads, then manually "
+        "select appropriate payloads for your exploit."
+    )
     
     # Verify the error message contains key information
-    assert "doesn't support querying compatible payloads" in expected_error
-    assert "Use list_payloads without exploit_module parameter" in expected_error
+    assert "compatible payloads" in expected_error
+    assert "compatible_with" in expected_error
     assert exploit_module in expected_error
     assert "manually select appropriate payloads" in expected_error
     
@@ -242,7 +244,7 @@ def test_incompatible_payloads_error_message():
 
 
 def test_combined_filters():
-    """Test that search_term works in combination with other filters."""
+    """Test that search works in combination with other filters."""
     # Sample payloads
     all_payloads = [
         'windows/x64/meterpreter/reverse_tcp',
@@ -256,14 +258,14 @@ def test_combined_filters():
     platform = 'linux'
     filtered = [p for p in all_payloads if p.lower().startswith(platform + '/') or f"/{platform}/" in p.lower()]
     
-    # Then filter by search_term
-    search_term = 'meterpreter'
-    filtered = [p for p in filtered if search_term.lower() in p.lower()]
+    # Then filter by search
+    search = 'meterpreter'
+    filtered = [p for p in filtered if search.lower() in p.lower()]
     
     assert len(filtered) == 1
     assert 'linux/x86/meterpreter/reverse_tcp' in filtered
     
-    print(f"✓ Combined filters work: platform='{platform}' + search='{search_term}' found {len(filtered)} payloads")
+    print(f"✓ Combined filters work: platform='{platform}' + search='{search}' found {len(filtered)} payloads")
 
 
 if __name__ == "__main__":
