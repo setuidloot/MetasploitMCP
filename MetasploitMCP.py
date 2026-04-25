@@ -3239,7 +3239,8 @@ async def run_exploit(
         run_as_job: If False, run sync via console. If True, run async via RPC.
         check_vulnerability: If True, run module's 'check' action first (if available).
         force_exploit: If True (default), automatically sets ForceExploit=true and
-                       AutoCheck=false unless already provided in options. This avoids
+                       AutoCheck=false unless already provided in options *and* those
+                       options are supported by the selected module. This avoids
                        AutoCheck aborting exploitation when check results are inconclusive.
                        Set False to preserve module defaults.
         timeout_seconds: Max time for synchronous run via console (max: 120s, values above are capped).
@@ -3265,9 +3266,10 @@ async def run_exploit(
     logger.info(f"Module {module} options: {options}")
     logger.info(f"Payload {payload} options: {payload_options}")
     
+    exploit_module = None
     # Validate module exists before proceeding
     try:
-        await _get_module_object('exploit', module)
+        exploit_module = await _get_module_object('exploit', module)
         logger.debug(f"Module '{module}' validated successfully")
     except InvalidModuleError as e:
         logger.warning(f"Exploit module '{module}' not found: {e}")
@@ -3283,12 +3285,28 @@ async def run_exploit(
         return {"status": "error", "message": f"Invalid options format: {e}"}
 
     if force_exploit:
+        supported_options = await _get_module_valid_options(exploit_module) if exploit_module else set()
+        supports_force_exploit = "ForceExploit" in supported_options
+        supports_auto_check = "AutoCheck" in supported_options
+
         if 'ForceExploit' not in parsed_options:
-            parsed_options['ForceExploit'] = True
-            logger.info("Auto-set ForceExploit=true for exploit execution.")
+            if supports_force_exploit:
+                parsed_options['ForceExploit'] = True
+                logger.info("Auto-set ForceExploit=true for exploit execution.")
+            else:
+                logger.info(
+                    "Skipping ForceExploit auto-injection for module '%s' because the option is not supported.",
+                    module,
+                )
         if 'AutoCheck' not in parsed_options:
-            parsed_options['AutoCheck'] = False
-            logger.info("Auto-set AutoCheck=false for exploit execution.")
+            if supports_auto_check:
+                parsed_options['AutoCheck'] = False
+                logger.info("Auto-set AutoCheck=false for exploit execution.")
+            else:
+                logger.info(
+                    "Skipping AutoCheck auto-injection for module '%s' because the option is not supported.",
+                    module,
+                )
 
     # Parse payload options gracefully
     try:
