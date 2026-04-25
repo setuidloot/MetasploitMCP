@@ -777,6 +777,7 @@ class TestSessionManagement:
         result = await send_session_command(999, "whoami")
         
         assert result["status"] == "error"
+        assert result["reason"] == "session_missing"
         assert "not found" in result["message"]
 
     @pytest.mark.asyncio

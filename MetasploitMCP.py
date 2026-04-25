@@ -363,6 +363,9 @@ SHELL_PROMPT_RE = re.compile(
 )  # Match common shell prompts, but avoid meterpreter prompt and bare ">"
 METERPRETER_PROMPT_RE = re.compile(r'meterpreter\s*>\s*$')
 METERPRETER_ERROR_RE = re.compile(r'(?m)^\s*\[-\]\s+.+$')
+METERPRETER_UNKNOWN_COMMAND_RE = re.compile(
+    r'(?mi)^\s*(?:\[-\]\s*)?unknown command:\s*.+$'
+)
 MODULE_COMPLETE_RE = re.compile(rb'.*module execution completed$', re.DOTALL | re.MULTILINE)
 
 # Regular Expressions for Vulnerability Detection
@@ -4147,6 +4150,53 @@ async def _drive_shell_command(
         }
 
 
+def _normalize_session_command_reason(status: str, reason: str) -> str:
+    """Normalize session command reasons to stable, machine-friendly values."""
+    normalized = (reason or "").strip().lower()
+    passthrough_reasons = {
+        "prompt",
+        "inactivity",
+        "mode",
+        "no_output",
+        "meterpreter_error",
+        "shell_mode_mismatch",
+        "session_missing",
+        "session_object_unavailable",
+        "session_busy",
+        "command_timeout",
+        "command_error",
+    }
+    if normalized in passthrough_reasons:
+        return normalized
+    if normalized == "busy" or status == "busy":
+        return "session_busy"
+    if normalized == "timeout" or status == "timeout":
+        return "command_timeout"
+    if normalized in {"", "error"} or status == "error":
+        return "command_error"
+    return normalized
+
+
+def _is_meterpreter_shell_mode_mismatch(
+    *,
+    session_type: str,
+    current_mode: str,
+    command: str,
+    output: str,
+) -> bool:
+    """Detect shell commands sent while still in meterpreter mode."""
+    if session_type != "meterpreter":
+        return False
+    if current_mode != "meterpreter":
+        return False
+    lowered_command = command.strip().lower()
+    if lowered_command in {"shell", "exit"}:
+        return False
+    if not output:
+        return False
+    return bool(METERPRETER_UNKNOWN_COMMAND_RE.search(output))
+
+
 @mcp.tool()
 async def send_session_command(
     session_id: int,
@@ -4207,9 +4257,10 @@ async def send_session_command(
                 f"Session {session_id} is currently in use by another command. "
                 f"Waited {SESSION_LOCK_WAIT_TIMEOUT}s. Please retry after a brief delay."
             ),
-            "reason": "busy",
+            "reason": "session_busy",
             "elapsed_seconds": 0.0,
             "output": "",
+            "session_id": session_id,
         }
 
     # Report initial progress if ctx available
@@ -4245,9 +4296,10 @@ async def send_session_command(
             return {
                 "status": "error",
                 "message": f"Session {session_id} not found.",
-                "reason": "error",
+                "reason": "session_missing",
                 "elapsed_seconds": 0.0,
                 "output": "",
+                "session_id": session_id,
             }
 
         session_info = current_sessions[session_id_str]
@@ -4269,9 +4321,10 @@ async def send_session_command(
             return {
                 "status": "error",
                 "message": f"Error retrieving session {session_id} object.",
-                "reason": "error",
+                "reason": "session_object_unavailable",
                 "elapsed_seconds": 0.0,
                 "output": "",
+                "session_id": session_id,
             }
         
         logger.debug(f"Session object retrieved in {session_obj_duration:.1f}s")
@@ -4385,6 +4438,24 @@ async def send_session_command(
                     bytes_read = meterpreter_result.get("bytes_read", len(output))
                     meterpreter_errors = meterpreter_result.get("meterpreter_errors", [])
 
+                if _is_meterpreter_shell_mode_mismatch(
+                    session_type=session_type,
+                    current_mode=current_mode,
+                    command=command,
+                    output=output,
+                ):
+                    status = "error"
+                    reason = "shell_mode_mismatch"
+                    message = (
+                        "Command appears to require shell mode. "
+                        "Run 'shell' first, then retry."
+                    )
+                    logger.warning(
+                        "Detected shell-mode mismatch for session %s command '%s'",
+                        session_id,
+                        command,
+                    )
+
                 if elapsed_seconds <= 0:
                     elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                 logger.info(
@@ -4394,7 +4465,7 @@ async def send_session_command(
                 )
             except asyncio.TimeoutError:
                 status = "timeout"
-                reason = "timeout"
+                reason = "command_timeout"
                 elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                 message = f"Meterpreter command timed out after {timeout_seconds} seconds."
                 logger.warning(f"Command '{command}' timed out on Meterpreter session {session_id}")
@@ -4407,7 +4478,7 @@ async def send_session_command(
             except (MsfRpcError, Exception) as run_err:
                 logger.error(f"Error during Meterpreter command execution for '{command}': {run_err}")
                 message = f"Error executing Meterpreter command: {run_err}"
-                reason = "error"
+                reason = "command_error"
                 elapsed_seconds = asyncio.get_event_loop().time() - command_start_time
                 try:
                     output = await asyncio.to_thread(lambda: session.read()) or ""
@@ -4438,7 +4509,7 @@ async def send_session_command(
         else: # Unknown session type
             logger.warning(f"Cannot execute command: Unknown session type '{session_type}' for session {session_id}")
             message = f"Cannot execute command: Unknown session type '{session_type}'."
-            reason = "error"
+            reason = "command_error"
 
         # Report completion progress if ctx available
         if ctx:
@@ -4451,11 +4522,12 @@ async def send_session_command(
             "status": status,
             "message": message,
             "output": output,
-            "reason": reason,
+            "reason": _normalize_session_command_reason(status, reason),
             "elapsed_seconds": elapsed_seconds,
             "chunks_read": chunks_read,
             "bytes_read": bytes_read,
             "meterpreter_errors": meterpreter_errors,
+            "session_id": session_id,
         }
 
     except MsfRpcError as e:
@@ -4464,35 +4536,39 @@ async def send_session_command(
              return {
                  "status": "error",
                  "message": f"Session {session_id} is not valid.",
-                 "reason": "error",
+                 "reason": "session_missing",
                  "elapsed_seconds": 0.0,
                  "output": "",
+                 "session_id": session_id,
              }
         logger.error(f"MsfRpcError interacting with session {session_id}: {e}")
         return {
             "status": "error",
             "message": f"Error interacting with session {session_id}: {e}",
-            "reason": "error",
+            "reason": "command_error",
             "elapsed_seconds": 0.0,
             "output": "",
+            "session_id": session_id,
         }
     except KeyError: # May occur if session disappears between list and access
         logger.error(f"Session {session_id} likely disappeared (KeyError).")
         return {
             "status": "error",
             "message": f"Session {session_id} not found or disappeared.",
-            "reason": "error",
+            "reason": "session_missing",
             "elapsed_seconds": 0.0,
             "output": "",
+            "session_id": session_id,
         }
     except Exception as e:
         logger.exception(f"Unexpected error sending command to session {session_id}.")
         return {
             "status": "error",
             "message": f"Unexpected server error sending command: {e}",
-            "reason": "error",
+            "reason": "command_error",
             "elapsed_seconds": 0.0,
             "output": "",
+            "session_id": session_id,
         }
     finally:
         session_lock.release()

@@ -229,6 +229,7 @@ class TestSendSessionCommandLocking:
         lock.release()
 
         assert result["status"] == "busy"
+        assert result["reason"] == "session_busy"
         assert "currently in use" in result["message"]
 
     @pytest.mark.asyncio
@@ -243,6 +244,7 @@ class TestSendSessionCommandLocking:
             result = await send_session_command(99, "whoami")
 
         assert result["status"] == "error"
+        assert result["reason"] == "session_missing"
         assert "not found" in result["message"]
         assert "99" not in session_shell_type
 
@@ -301,8 +303,23 @@ class TestSendSessionCommandLocking:
             )
 
         assert result["status"] == "timeout"
-        assert result["reason"] == "timeout"
+        assert result["reason"] == "command_timeout"
         assert "elapsed_seconds" in result
+
+    @pytest.mark.asyncio
+    async def test_meterpreter_unknown_command_reports_shell_mode_mismatch(self, mock_asyncio_to_thread):
+        """Unknown command output should point callers to shell mode explicitly."""
+        client, session_obj = _make_mock_client({
+            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+        })
+        session_obj.read = Mock(return_value="[-] Unknown command: whoami\nmeterpreter > ")
+
+        with patch('MetasploitMCP.get_msf_client', return_value=client):
+            result = await send_session_command(1, "whoami")
+
+        assert result["status"] == "error"
+        assert result["reason"] == "shell_mode_mismatch"
+        assert "shell mode" in result["message"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +448,7 @@ class TestLockReleaseOnErrors:
             result = await send_session_command(1, "sysinfo")
 
         assert result["status"] == "error"
+        assert result["reason"] == "command_error"
 
         lock = await _get_session_lock("1")
         assert not lock.locked(), "Lock should be released after RPC error"
@@ -447,6 +465,7 @@ class TestLockReleaseOnErrors:
             result = await send_session_command(1, "sysinfo")
 
         assert result["status"] == "error"
+        assert result["reason"] == "command_error"
 
         lock = await _get_session_lock("1")
         assert not lock.locked(), "Lock should be released after unexpected error"
