@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-import MetasploitMCP as mcp_module
+import metasploit_mcp.server as mcp_module
 
 
 def _parse_args() -> argparse.Namespace:

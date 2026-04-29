@@ -258,3 +258,6 @@ meterpreter_*
 # MCP specific
 mcp_sessions/
 mcp_logs/
+# IDE workspace files
+*.code-workspace
+*.stackdump

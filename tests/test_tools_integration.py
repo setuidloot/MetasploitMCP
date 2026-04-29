@@ -12,7 +12,7 @@ import re
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock pymetasploit3 module BEFORE importing MetasploitMCP
@@ -78,7 +78,7 @@ sys.modules['pymetasploit3.msfrpc'].MsfConsole = MockMsfConsole
 sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 
 # Import the module and then get the actual functions
-import MetasploitMCP
+import metasploit_mcp.server as MetasploitMCP
 
 # Helper function to unwrap FastMCP decorated functions
 def unwrap_tool(tool_obj):
@@ -116,7 +116,7 @@ class TestExploitListingTools:
     def mock_client(self, mock_asyncio_to_thread):
         """Fixture providing a mock MSF client."""
         client = MockMsfRpcClient()
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
                 yield client
 
@@ -240,9 +240,9 @@ class TestExploitListingTools:
             'windows/x64/shell/reverse_tcp'
         ]
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                with patch('metasploit_mcp.server._get_module_object', return_value=mock_module):
                     result = await list_payloads(compatible_with="windows/smb/ms17_010_eternalblue")
         
         assert isinstance(result, list)
@@ -264,9 +264,9 @@ class TestExploitListingTools:
             'windows/meterpreter/reverse_tcp'  # x86 version
         ]
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                with patch('metasploit_mcp.server._get_module_object', return_value=mock_module):
                     result = await list_payloads(compatible_with="windows/smb/ms17_010_eternalblue", arch="x64")
         
         assert isinstance(result, list)
@@ -280,9 +280,9 @@ class TestExploitListingTools:
         # Create mock client
         client = MockMsfRpcClient()
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', side_effect=ValueError("Module not found")):
+                with patch('metasploit_mcp.server._get_module_object', side_effect=ValueError("Module not found")):
                     result = await list_payloads(compatible_with="invalid/exploit/name")
         
         assert isinstance(result, list)
@@ -303,9 +303,9 @@ class TestExploitListingTools:
         mock_module = MockMsfModule('exploit/unix/ftp/vsftpd_234_backdoor')
         # Don't set compatible_payloads attribute to simulate older MSF versions
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=mock_module):
+                with patch('metasploit_mcp.server._get_module_object', return_value=mock_module):
                     result = await list_payloads(compatible_with="unix/ftp/vsftpd_234_backdoor")
         
         # Should return an error message explaining that compatible payloads could not be queried
@@ -323,10 +323,10 @@ class TestPayloadGeneration:
         client = MockMsfRpcClient()
         module = MockMsfModule('payload/windows/meterpreter/reverse_tcp')
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=module):
-                    with patch('MetasploitMCP.PAYLOAD_SAVE_DIR', '/tmp/test'):
+                with patch('metasploit_mcp.server._get_module_object', return_value=module):
+                    with patch('metasploit_mcp.server.PAYLOAD_SAVE_DIR', '/tmp/test'):
                         with patch('os.makedirs'):
                             with patch('builtins.open', create=True) as mock_open:
                                 mock_open.return_value.__enter__.return_value.write = Mock()
@@ -412,9 +412,9 @@ class TestPayloadGeneration:
             raise KeyError(b'payload')
         module.payload_generate = raise_keyerror
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=module):
+                with patch('metasploit_mcp.server._get_module_object', return_value=module):
                     options = {"LHOST": "192.168.1.100", "LPORT": 4444}
                     result = await generate_payload(
                         payload="java/jsp_shell_reverse_tcp",
@@ -443,9 +443,9 @@ class TestPayloadGeneration:
             raise KeyError(b'payload')
         module.payload_generate = raise_keyerror
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=module):
+                with patch('metasploit_mcp.server._get_module_object', return_value=module):
                     options = {"LHOST": "192.168.1.100"}  # Missing LPORT
                     result = await generate_payload(
                         payload="windows/meterpreter/reverse_tcp",
@@ -466,10 +466,10 @@ class TestExploitExecution:
         client = MockMsfRpcClient()
         module = MockMsfModule('exploit/windows/smb/ms17_010_eternalblue')
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
-                    with patch('MetasploitMCP._execute_module_console') as mock_console:
+                with patch('metasploit_mcp.server._execute_module_rpc') as mock_rpc:
+                    with patch('metasploit_mcp.server._execute_module_console') as mock_console:
                         mock_rpc.return_value = {
                             "status": "success",
                             "message": "Exploit executed",
@@ -489,7 +489,7 @@ class TestExploitExecution:
         client, mock_rpc, mock_console = mock_exploit_environment
         
         # Mock port availability check to always return available
-        with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, ""))):
+        with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, ""))):
             result = await run_exploit(
                 module="windows/smb/ms17_010_eternalblue",
                 options={"RHOSTS": "192.168.1.1"},
@@ -507,7 +507,7 @@ class TestExploitExecution:
         client, mock_rpc, mock_console = mock_exploit_environment
         
         # Mock port availability check to always return available
-        with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, ""))):
+        with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, ""))):
             result = await run_exploit(
                 module="windows/smb/ms17_010_eternalblue",
                 options={"RHOSTS": "192.168.1.1"},
@@ -561,10 +561,10 @@ class TestExploitExecution:
         """Test that invalid payload error includes helpful suggestion (RPC mode)."""
         client = MockMsfRpcClient()
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, None))):
-                    with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
+                with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, None))):
+                    with patch('metasploit_mcp.server._execute_module_rpc') as mock_rpc:
                         # Simulate an invalid payload error
                         mock_rpc.return_value = {
                             "status": "error",
@@ -587,13 +587,13 @@ class TestExploitExecution:
     @pytest.mark.asyncio
     async def test_run_exploit_module_validation(self, mock_asyncio_to_thread):
         """Test that run_exploit validates module exists before execution."""
-        from MetasploitMCP import InvalidModuleError, _get_module_object
+        from metasploit_mcp.server import InvalidModuleError, _get_module_object
         
         client = MockMsfRpcClient()
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object') as mock_get_module:
+                with patch('metasploit_mcp.server._get_module_object') as mock_get_module:
                     # Simulate module not found
                     mock_get_module.side_effect = InvalidModuleError(
                         module_type='exploit',
@@ -617,16 +617,16 @@ class TestExploitExecution:
     @pytest.mark.asyncio
     async def test_run_exploit_failed_to_load_module_detection_check(self, mock_asyncio_to_thread):
         """Test that 'Failed to load module' is detected during vulnerability check."""
-        from MetasploitMCP import FAILED_TO_LOAD_MODULE_RE
+        from metasploit_mcp.server import FAILED_TO_LOAD_MODULE_RE
         
         client = MockMsfRpcClient()
         mock_module = MockMsfModule('exploit/multi/http/cups_ipp_remote_code_execution')
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=mock_module):
-                    with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, None))):
-                        with patch('MetasploitMCP._execute_module_console') as mock_console:
+                with patch('metasploit_mcp.server._get_module_object', return_value=mock_module):
+                    with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, None))):
+                        with patch('metasploit_mcp.server._execute_module_console') as mock_console:
                             # Simulate "Failed to load module" in check output
                             mock_console.return_value = {
                                 "status": "error",
@@ -654,16 +654,16 @@ class TestExploitExecution:
     @pytest.mark.asyncio
     async def test_run_exploit_failed_to_load_module_detection_exploit(self, mock_asyncio_to_thread):
         """Test that 'Failed to load module' is detected during exploit execution."""
-        from MetasploitMCP import FAILED_TO_LOAD_MODULE_RE
+        from metasploit_mcp.server import FAILED_TO_LOAD_MODULE_RE
         
         client = MockMsfRpcClient()
         mock_module = MockMsfModule('exploit/multi/http/cups_ipp_remote_code_execution')
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._get_module_object', return_value=mock_module):
-                    with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, None))):
-                        with patch('MetasploitMCP._execute_module_console') as mock_console:
+                with patch('metasploit_mcp.server._get_module_object', return_value=mock_module):
+                    with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, None))):
+                        with patch('metasploit_mcp.server._execute_module_console') as mock_console:
                             # Simulate "Failed to load module" in exploit output
                             mock_console.return_value = {
                                 "status": "error",
@@ -692,10 +692,10 @@ class TestExploitExecution:
         """Test that invalid payload error includes helpful suggestion (Console mode)."""
         client = MockMsfRpcClient()
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, None))):
-                    with patch('MetasploitMCP._execute_module_console') as mock_console:
+                with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, None))):
+                    with patch('metasploit_mcp.server._execute_module_console') as mock_console:
                         # Simulate console output with invalid payload error
                         mock_console.return_value = {
                             "status": "error",
@@ -736,7 +736,7 @@ class TestSessionManagement:
         }
         client.sessions.session = Mock(return_value=session)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
                 yield client, session
 
@@ -756,7 +756,7 @@ class TestSessionManagement:
     async def test_send_session_command_meterpreter(self, mock_session_environment):
         """Test sending command to Meterpreter session."""
         client, session = mock_session_environment
-        with patch('MetasploitMCP._drive_meterpreter_command', new=AsyncMock(return_value={
+        with patch('metasploit_mcp.server._drive_meterpreter_command', new=AsyncMock(return_value={
             "status": "success",
             "output": "sysinfo output",
             "message": "Command completed",
@@ -823,9 +823,9 @@ class TestListenerManagement:
         client.jobs.list = {}
         client.jobs.stop = Mock(return_value="stopped")
         
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             with patch.object(MetasploitMCP, '_msf_client_instance', client):
-                with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
+                with patch('metasploit_mcp.server._execute_module_rpc') as mock_rpc:
                     mock_rpc.return_value = {
                         "status": "success",
                         "job_id": 1234,
@@ -839,7 +839,7 @@ class TestListenerManagement:
         client, mock_rpc = mock_job_environment
         
         # Mock port availability check to always return available
-        with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, ""))):
+        with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, ""))):
             result = await start_listener(
                 payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100",
@@ -856,7 +856,7 @@ class TestListenerManagement:
         client, mock_rpc = mock_job_environment
         
         # Mock port availability check to always return available
-        with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(True, ""))):
+        with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(True, ""))):
             result = await start_listener(
                 payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100", 
@@ -891,7 +891,7 @@ class TestListenerManagement:
         client, mock_rpc = mock_job_environment
         
         # Mock port availability check to return port in use
-        with patch('MetasploitMCP.check_port_available', new=AsyncMock(return_value=(False, "Port 4444 is already in use on 0.0.0.0. Please choose a different port or stop the service using this port."))):
+        with patch('metasploit_mcp.server.check_port_available', new=AsyncMock(return_value=(False, "Port 4444 is already in use on 0.0.0.0. Please choose a different port or stop the service using this port."))):
             result = await start_listener(
                 payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100",

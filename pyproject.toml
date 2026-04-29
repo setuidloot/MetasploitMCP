@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "metasploit-mcp"
-version = "2.0.0"
+version = "3.0.0"
 description = "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol"
 authors = ["MetasploitMCP Contributors"]
 readme = "README.md"
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: System :: Networking",
     "Topic :: System :: Systems Administration",
 ]
-packages = [{include = "MetasploitMCP.py"}]
+packages = [{include = "metasploit_mcp", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
@@ -50,7 +50,7 @@ httpx = ">=0.24.0"
 langchain-mcp-adapters = ">=0.1.0"
 
 [tool.poetry.scripts]
-metasploit-mcp = "MetasploitMCP:main"
+metasploit-mcp = "metasploit_mcp:main"
 
 [build-system]
 requires = ["poetry-core"]
@@ -68,7 +68,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["."]
+source = ["src"]
 omit = ["tests/*", "venv/*", ".venv/*"]
 
 [tool.coverage.report]

@@ -30,7 +30,7 @@ def test_list_payloads_signature():
         del sys.modules['MetasploitMCP']
     
     # Now we can import and inspect
-    import MetasploitMCP
+    import metasploit_mcp.server as MetasploitMCP
     import inspect
     
     # Check that list_payloads function exists

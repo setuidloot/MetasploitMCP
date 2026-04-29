@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the module to test
-import MetasploitMCP
+import metasploit_mcp.server as MetasploitMCP
 
 
 def get_function_description(func):

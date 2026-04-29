@@ -13,7 +13,7 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock pymetasploit3 before importing MetasploitMCP
@@ -52,8 +52,8 @@ sys.modules['pymetasploit3.msfrpc'] = mock_msfrpc
 sys.modules['pymetasploit3'] = Mock(msfrpc=mock_msfrpc)
 
 # Import the module under test
-import MetasploitMCP
-from MetasploitMCP import (
+import metasploit_mcp.server as MetasploitMCP
+from metasploit_mcp.server import (
     _NoOpContextManager,
     get_keepalive_manager,
     DEFAULT_KEEPALIVE_INTERVAL,
@@ -167,7 +167,7 @@ class TestToolsWithNoneContext:
     @pytest.fixture
     def mock_msf_client(self):
         """Create a mock MSF client for testing."""
-        with patch('MetasploitMCP.get_msf_client') as mock_get_client:
+        with patch('metasploit_mcp.server.get_msf_client') as mock_get_client:
             client = Mock()
             client.modules.exploits = ['windows/smb/ms17_010_eternalblue', 'unix/ftp/vsftpd_234_backdoor']
             client.modules.payloads = ['windows/meterpreter/reverse_tcp', 'linux/x86/shell/reverse_tcp']
@@ -219,7 +219,7 @@ class TestToolsWithMockContext:
     @pytest.fixture
     def mock_msf_client(self):
         """Create a mock MSF client for testing."""
-        with patch('MetasploitMCP.get_msf_client') as mock_get_client:
+        with patch('metasploit_mcp.server.get_msf_client') as mock_get_client:
             client = Mock()
             client.modules.exploits = ['windows/smb/ms17_010_eternalblue']
             client.modules.payloads = ['windows/meterpreter/reverse_tcp']

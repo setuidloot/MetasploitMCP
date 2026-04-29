@@ -101,7 +101,7 @@ def mock_msf_environment():
 @pytest.fixture
 def mock_logger():
     """Fixture providing a mock logger."""
-    with patch('MetasploitMCP.logger') as mock_log:
+    with patch('metasploit_mcp.server.logger') as mock_log:
         yield mock_log
 
 @pytest.fixture 
@@ -110,7 +110,7 @@ def temp_payload_dir(tmp_path):
     payload_dir = tmp_path / "payloads"
     payload_dir.mkdir()
     
-    with patch('MetasploitMCP.PAYLOAD_SAVE_DIR', str(payload_dir)):
+    with patch('metasploit_mcp.server.PAYLOAD_SAVE_DIR', str(payload_dir)):
         yield str(payload_dir)
 
 @pytest.fixture
@@ -158,8 +158,8 @@ def pytest_runtest_setup(item):
 def reset_msf_client():
     """Automatically reset the global MSF client between tests."""
     # Only patch if MetasploitMCP is already imported
-    if 'MetasploitMCP' in sys.modules:
-        with patch.object(sys.modules['MetasploitMCP'], '_msf_client_instance', None):
+    if 'metasploit_mcp.server' in sys.modules:
+        with patch.object(sys.modules['metasploit_mcp.server'], '_msf_client_instance', None):
             yield
     else:
         yield

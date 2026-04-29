@@ -9,7 +9,7 @@ import os
 from unittest.mock import Mock, patch, AsyncMock
 from typing import Dict, Any, List
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock the dependencies that aren't available in test environment
@@ -39,8 +39,8 @@ sys.modules['mcp.server.sse'] = Mock()
 sys.modules['pymetasploit3.msfrpc'] = Mock()
 
 # Import the module after mocking dependencies
-import MetasploitMCP
-from MetasploitMCP import get_local_ip_addresses, validate_bind_address
+import metasploit_mcp.server as MetasploitMCP
+from metasploit_mcp.server import get_local_ip_addresses, validate_bind_address
 
 
 class TestGetLocalIpAddresses:
@@ -129,7 +129,7 @@ class TestValidateBindAddress:
     @pytest.mark.asyncio
     async def test_validate_local_address(self):
         """Test validation of local IP address."""
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100', '::1']):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100', '::1']):
             is_valid, error_msg = await validate_bind_address("192.168.1.100")
             assert is_valid is True
             assert error_msg == ""
@@ -137,7 +137,7 @@ class TestValidateBindAddress:
     @pytest.mark.asyncio
     async def test_validate_non_local_address(self):
         """Test validation of non-local IP address."""
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100', '::1']):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100', '::1']):
             is_valid, error_msg = await validate_bind_address("8.8.8.8")
             assert is_valid is False
             assert "not configured on this machine" in error_msg
@@ -146,7 +146,7 @@ class TestValidateBindAddress:
     @pytest.mark.asyncio
     async def test_validate_loopback_addresses(self):
         """Test validation of loopback addresses."""
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '::1']):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '::1']):
             # IPv4 loopback
             is_valid, error_msg = await validate_bind_address("127.0.0.1")
             assert is_valid is True
@@ -164,10 +164,10 @@ class TestBindAddressIntegration:
     @pytest.fixture
     def mock_environment(self, mock_asyncio_to_thread):
         """Fixture providing mocked environment for testing."""
-        with patch('MetasploitMCP.get_msf_client'):
-            with patch('MetasploitMCP._execute_module_rpc') as mock_rpc:
-                with patch('MetasploitMCP._get_module_object') as mock_get_module:
-                    with patch('MetasploitMCP._set_module_options') as mock_set_options:
+        with patch('metasploit_mcp.server.get_msf_client'):
+            with patch('metasploit_mcp.server._execute_module_rpc') as mock_rpc:
+                with patch('metasploit_mcp.server._get_module_object') as mock_get_module:
+                    with patch('metasploit_mcp.server._set_module_options') as mock_set_options:
                         mock_rpc.return_value = {"status": "success", "job_id": "1234"}
                         mock_module = Mock()
                         mock_module.runoptions = {}
@@ -180,7 +180,7 @@ class TestBindAddressIntegration:
         """Test start_listener with valid bind address."""
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
             result = await MetasploitMCP.start_listener(
                 payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100",
@@ -195,7 +195,7 @@ class TestBindAddressIntegration:
         """Test start_listener with invalid bind address."""
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
             result = await MetasploitMCP.start_listener(
                 payload="windows/meterpreter/reverse_tcp",
                 lhost="192.168.1.100",
@@ -254,8 +254,8 @@ class TestBindAddressIntegration:
         """Test generate_payload with valid bind address."""
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
-            with patch('MetasploitMCP.PAYLOAD_SAVE_DIR', '/tmp/test'):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
+            with patch('metasploit_mcp.server.PAYLOAD_SAVE_DIR', '/tmp/test'):
                 with patch('os.makedirs'):
                     with patch('builtins.open', create=True) as mock_open:
                         mock_open.return_value.__enter__.return_value.write = Mock()
@@ -274,7 +274,7 @@ class TestBindAddressIntegration:
         """Test generate_payload with invalid bind address."""
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
-        with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
+        with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '192.168.1.100']):
             result = await MetasploitMCP.generate_payload(
                 payload="windows/meterpreter/reverse_tcp",
                 format="exe",
@@ -290,7 +290,7 @@ class TestBindAddressIntegration:
         """Test generate_payload with default bind address (should be 0.0.0.0)."""
         mock_rpc, mock_get_module, mock_set_options, mock_module = mock_environment
         
-        with patch('MetasploitMCP.PAYLOAD_SAVE_DIR', '/tmp/test'):
+        with patch('metasploit_mcp.server.PAYLOAD_SAVE_DIR', '/tmp/test'):
             with patch('os.makedirs'):
                 with patch('builtins.open', create=True) as mock_open:
                     mock_open.return_value.__enter__.return_value.write = Mock()

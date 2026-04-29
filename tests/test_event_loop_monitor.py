@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch, MagicMock, AsyncMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import the event loop monitor module
-from event_loop_monitor import (
+from metasploit_mcp.event_loop_monitor import (
     EventLoopWatchdog,
     SlowCallbackLogger,
     configure_event_loop_debugging,
@@ -393,7 +393,7 @@ class TestAsyncSessionCommandFixes:
     @pytest.fixture
     def metasploit_source(self):
         """Fixture providing the MetasploitMCP source code."""
-        source_path = os.path.join(os.path.dirname(__file__), '..', 'MetasploitMCP.py')
+        source_path = os.path.join(os.path.dirname(__file__), '..', 'src/metasploit_mcp/server.py')
         with open(source_path, 'r') as f:
             return f.read()
     

@@ -78,7 +78,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         assert pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled() is True
         assert pymetasploit3_jsonrpc_patch._get_protocol() == 'jsonrpc'
     
@@ -89,7 +89,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         assert pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled() is False
         assert pymetasploit3_jsonrpc_patch._get_protocol() == 'msgpack'
     
@@ -100,7 +100,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         assert pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled() is False
         assert pymetasploit3_jsonrpc_patch._get_protocol() == 'msgpack'
     
@@ -109,7 +109,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Test encoding a simple list (Metasploit RPC format)
         data = ['auth.login', 'username', 'password']
@@ -124,7 +124,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Test decoding JSON response
         data = {'result': 'success', 'token': 'test-token'}
@@ -139,7 +139,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         data = ['method', 'arg1', 'arg2']
         encoded = pymetasploit3_jsonrpc_patch._patched_encode(data)
@@ -156,7 +156,7 @@ class TestJSONRPCPatch:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
         import msgpack
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         data = ['method', 'arg1', 'arg2']
         encoded = pymetasploit3_jsonrpc_patch._patched_encode(data)
@@ -173,7 +173,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Create a mock client instance
         mock_client = Mock()
@@ -197,7 +197,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Create a mock client instance
         mock_client = Mock()
@@ -221,7 +221,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Create a mock client instance
         mock_client = Mock()
@@ -254,7 +254,7 @@ class TestJSONRPCPatch:
         mock_utils = sys.modules['pymetasploit3.utils']
         mock_msfrpc = sys.modules['pymetasploit3.msfrpc']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Verify patches were applied
         assert mock_utils.encode == pymetasploit3_jsonrpc_patch._patched_encode
@@ -272,7 +272,7 @@ class TestJSONRPCPatch:
         original_encode = sys.modules['pymetasploit3.utils'].encode
         original_decode = sys.modules['pymetasploit3.utils'].decode
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Apply patch
         pymetasploit3_jsonrpc_patch.apply_patch()
@@ -289,7 +289,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Test with nested structures (common in Metasploit RPC)
         data = [
@@ -316,7 +316,7 @@ class TestJSONRPCPatch:
         if 'pymetasploit3_jsonrpc_patch' in sys.modules:
             del sys.modules['pymetasploit3_jsonrpc_patch']
         
-        import pymetasploit3_jsonrpc_patch
+        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
         
         # Test with invalid JSON
         invalid_json = b'not valid json {'

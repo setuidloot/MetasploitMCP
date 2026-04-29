@@ -15,12 +15,12 @@ class TestTimeoutCapConstants:
     
     def test_max_tool_timeout_constant_exists(self):
         """Verify MAX_TOOL_TIMEOUT_SECONDS constant is defined"""
-        from MetasploitMCP import MAX_TOOL_TIMEOUT_SECONDS
+        from metasploit_mcp.server import MAX_TOOL_TIMEOUT_SECONDS
         assert MAX_TOOL_TIMEOUT_SECONDS == 120
     
     def test_default_timeout_constants_within_limit(self):
         """Verify default timeout constants don't exceed the max"""
-        from MetasploitMCP import (
+        from metasploit_mcp.server import (
             LONG_CONSOLE_READ_TIMEOUT,
             SESSION_COMMAND_TIMEOUT,
             SESSION_READ_INACTIVITY_TIMEOUT,
@@ -38,7 +38,7 @@ class TestTimeoutCapConstants:
     
     def test_max_tool_timeout_is_120(self):
         """Verify the max tool timeout is exactly 120 seconds"""
-        from MetasploitMCP import MAX_TOOL_TIMEOUT_SECONDS
+        from metasploit_mcp.server import MAX_TOOL_TIMEOUT_SECONDS
         assert MAX_TOOL_TIMEOUT_SECONDS == 120, \
             f"MAX_TOOL_TIMEOUT_SECONDS should be 120, got {MAX_TOOL_TIMEOUT_SECONDS}"
 
@@ -48,7 +48,7 @@ class TestTimeoutCapLogic:
     
     def _apply_timeout_cap(self, timeout_seconds: int) -> int:
         """Replicate the timeout capping logic used in tools"""
-        from MetasploitMCP import MAX_TOOL_TIMEOUT_SECONDS
+        from metasploit_mcp.server import MAX_TOOL_TIMEOUT_SECONDS
         if timeout_seconds > MAX_TOOL_TIMEOUT_SECONDS:
             return MAX_TOOL_TIMEOUT_SECONDS
         return timeout_seconds
@@ -93,7 +93,7 @@ class TestTimeoutCapInSource:
         import os
         
         # Read the source file
-        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'MetasploitMCP.py')
+        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src/metasploit_mcp/server.py')
         with open(source_path, 'r') as f:
             source = f.read()
         
@@ -104,7 +104,7 @@ class TestTimeoutCapInSource:
         """Verify run_exploit function checks timeout cap"""
         import os
         
-        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'MetasploitMCP.py')
+        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src/metasploit_mcp/server.py')
         with open(source_path, 'r') as f:
             source = f.read()
         
@@ -131,7 +131,7 @@ class TestTimeoutCapInSource:
         """Verify run_post_module function checks timeout cap"""
         import os
         
-        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'MetasploitMCP.py')
+        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src/metasploit_mcp/server.py')
         with open(source_path, 'r') as f:
             source = f.read()
         
@@ -151,7 +151,7 @@ class TestTimeoutCapInSource:
         """Verify run_auxiliary_module function checks timeout cap"""
         import os
         
-        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'MetasploitMCP.py')
+        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src/metasploit_mcp/server.py')
         with open(source_path, 'r') as f:
             source = f.read()
         
@@ -171,7 +171,7 @@ class TestTimeoutCapInSource:
         """Verify send_session_command function checks timeout cap"""
         import os
         
-        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'MetasploitMCP.py')
+        source_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src/metasploit_mcp/server.py')
         with open(source_path, 'r') as f:
             source = f.read()
         

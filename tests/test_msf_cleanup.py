@@ -18,7 +18,7 @@ class TestMsfClientCleanup:
     
     def test_cleanup_msf_client_no_client(self):
         """Test cleanup handles None client gracefully"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Ensure no client is set
         MetasploitMCP._msf_client_instance = None
@@ -28,7 +28,7 @@ class TestMsfClientCleanup:
     
     def test_cleanup_msf_client_calls_logout(self):
         """Test cleanup calls auth.logout with token"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Create mock client
         mock_client = Mock()
@@ -52,7 +52,7 @@ class TestMsfClientCleanup:
     
     def test_cleanup_msf_client_handles_logout_error(self):
         """Test cleanup handles auth.logout error gracefully"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Create mock client that raises error on logout
         mock_client = Mock()
@@ -73,7 +73,7 @@ class TestMsfClientCleanup:
     
     def test_cleanup_msf_client_no_token(self):
         """Test cleanup handles client without token"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Create mock client without token
         mock_client = Mock(spec=[])  # No attributes
@@ -97,7 +97,7 @@ class TestMsfClientCleanupAsync:
     @pytest.mark.asyncio
     async def test_cleanup_msf_client_async_no_client(self):
         """Test async cleanup handles None client gracefully"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Ensure no client is set
         MetasploitMCP._msf_client_instance = None
@@ -108,7 +108,7 @@ class TestMsfClientCleanupAsync:
     @pytest.mark.asyncio
     async def test_cleanup_msf_client_async_calls_logout(self):
         """Test async cleanup calls auth.logout with token"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Create mock client
         mock_client = Mock()
@@ -138,7 +138,7 @@ class TestCleanupAllMsfResources:
     @pytest.mark.asyncio
     async def test_cleanup_all_resources_calls_both(self):
         """Test cleanup_all_msf_resources calls both instance manager and client cleanup"""
-        import MetasploitMCP
+        import metasploit_mcp.server as MetasploitMCP
         
         # Mock instance manager
         mock_instance_manager = Mock()
@@ -175,7 +175,7 @@ class TestInstanceManagerTerminateInstance:
     @pytest.mark.asyncio
     async def test_terminate_instance_calls_logout(self):
         """Test that _terminate_instance calls auth.logout before terminating"""
-        from metasploit_instance_manager import MetasploitInstanceManager, MetasploitInstance
+        from metasploit_mcp.instance_manager import MetasploitInstanceManager, MetasploitInstance
         
         # Create manager
         manager = MetasploitInstanceManager(base_port=55553, password="test")
@@ -216,7 +216,7 @@ class TestInstanceManagerTerminateInstance:
     @pytest.mark.asyncio
     async def test_terminate_instance_handles_logout_error(self):
         """Test that _terminate_instance handles auth.logout error gracefully"""
-        from metasploit_instance_manager import MetasploitInstanceManager, MetasploitInstance
+        from metasploit_mcp.instance_manager import MetasploitInstanceManager, MetasploitInstance
         
         # Create manager
         manager = MetasploitInstanceManager(base_port=55553, password="test")
@@ -254,7 +254,7 @@ class TestInstanceManagerTerminateInstance:
     @pytest.mark.asyncio
     async def test_terminate_instance_not_found(self):
         """Test that _terminate_instance handles non-existent agent gracefully"""
-        from metasploit_instance_manager import MetasploitInstanceManager
+        from metasploit_mcp.instance_manager import MetasploitInstanceManager
         
         # Create manager
         manager = MetasploitInstanceManager(base_port=55553, password="test")
@@ -269,7 +269,7 @@ class TestInstanceManagerShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_terminates_all_instances(self):
         """Test that shutdown terminates all instances"""
-        from metasploit_instance_manager import MetasploitInstanceManager, MetasploitInstance
+        from metasploit_mcp.instance_manager import MetasploitInstanceManager, MetasploitInstance
         
         # Create manager
         manager = MetasploitInstanceManager(base_port=55553, password="test")

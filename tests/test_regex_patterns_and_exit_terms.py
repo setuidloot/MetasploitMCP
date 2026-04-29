@@ -12,7 +12,7 @@ import re
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock the dependencies that aren't available in test environment
@@ -59,7 +59,7 @@ sys.modules['pymetasploit3.msfrpc'].MsfConsole = MockMsfConsole
 sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 
 # Import after mocking
-from MetasploitMCP import (
+from metasploit_mcp.server import (
     IS_VULNERABLE_RE,
     IS_NOT_VULNERABLE_RE,
     SESSION_OPENED_RE,
@@ -466,7 +466,7 @@ class TestExecuteModuleConsoleWithExitTerms:
         mock_console.read.side_effect = mock_read
         
         # Mock get_msf_console
-        with patch('MetasploitMCP.get_msf_console') as mock_get_console:
+        with patch('metasploit_mcp.server.get_msf_console') as mock_get_console:
             mock_get_console.return_value.__aenter__.return_value = mock_console
             mock_get_console.return_value.__aexit__.return_value = None
             
@@ -515,7 +515,7 @@ class TestExecuteModuleConsoleWithExitTerms:
         mock_console.read.side_effect = mock_read
         
         # Mock get_msf_console
-        with patch('MetasploitMCP.get_msf_console') as mock_get_console:
+        with patch('metasploit_mcp.server.get_msf_console') as mock_get_console:
             mock_get_console.return_value.__aenter__.return_value = mock_console
             mock_get_console.return_value.__aexit__.return_value = None
             

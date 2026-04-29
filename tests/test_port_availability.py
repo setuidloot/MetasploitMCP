@@ -12,7 +12,7 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 from typing import Tuple
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock the dependencies that aren't available in test environment
@@ -43,8 +43,8 @@ sys.modules['mcp.server.session'] = Mock()
 sys.modules['pymetasploit3.msfrpc'] = Mock()
 
 # Import the module after mocking dependencies
-import MetasploitMCP
-from MetasploitMCP import check_port_available
+import metasploit_mcp.server as MetasploitMCP
+from metasploit_mcp.server import check_port_available
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,7 +87,7 @@ class TestCheckPortAvailableReturnType:
         assert is_available is False
         assert "Invalid port" in error_msg
     
-    @patch('MetasploitMCP.psutil.net_connections')
+    @patch('metasploit_mcp.server.psutil.net_connections')
     async def test_port_in_use_via_psutil_returns_tuple(self, mock_net_connections):
         """Test that when psutil detects port in use, it returns Tuple[bool, str]."""
         # Mock a connection using the port
@@ -107,7 +107,7 @@ class TestCheckPortAvailableReturnType:
         assert is_available is False
         assert "already in use" in error_msg
     
-    @patch('MetasploitMCP.psutil.net_connections')
+    @patch('metasploit_mcp.server.psutil.net_connections')
     @patch('socket.socket')
     async def test_port_available_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when port is available, it returns Tuple[bool, str]."""
@@ -127,7 +127,7 @@ class TestCheckPortAvailableReturnType:
         assert is_available is True
         assert error_msg == ""
     
-    @patch('MetasploitMCP.psutil.net_connections')
+    @patch('metasploit_mcp.server.psutil.net_connections')
     @patch('socket.socket')
     async def test_port_unavailable_socket_bind_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when socket.bind fails, it returns Tuple[bool, str]."""
@@ -148,7 +148,7 @@ class TestCheckPortAvailableReturnType:
         assert is_available is False
         assert "already in use" in error_msg
     
-    @patch('MetasploitMCP.psutil.net_connections')
+    @patch('metasploit_mcp.server.psutil.net_connections')
     @patch('socket.socket')
     async def test_psutil_access_denied_fallback_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when psutil raises AccessDenied, fallback returns Tuple[bool, str]."""
@@ -167,7 +167,7 @@ class TestCheckPortAvailableReturnType:
         assert isinstance(is_available, bool)
         assert isinstance(error_msg, str)
     
-    @patch('MetasploitMCP.psutil.net_connections')
+    @patch('metasploit_mcp.server.psutil.net_connections')
     @patch('socket.socket')
     async def test_exception_during_socket_bind_returns_tuple(self, mock_socket, mock_net_connections):
         """Test that when an exception occurs during socket bind, it returns Tuple[bool, str]."""
@@ -199,7 +199,7 @@ class TestCheckPortAvailableReturnType:
         ]
         
         for port, host, description in test_cases:
-            with patch('MetasploitMCP.psutil.net_connections', return_value=[]):
+            with patch('metasploit_mcp.server.psutil.net_connections', return_value=[]):
                 with patch('socket.socket') as mock_socket:
                     mock_sock = MagicMock()
                     mock_socket.return_value.__enter__.return_value = mock_sock
@@ -250,7 +250,7 @@ class TestValidateBindAddressReturnType:
     
     async def test_validate_bind_address_return_type_is_tuple(self):
         """Test that validate_bind_address returns a tuple."""
-        from MetasploitMCP import validate_bind_address
+        from metasploit_mcp.server import validate_bind_address
         
         result = await validate_bind_address("0.0.0.0")
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
@@ -258,7 +258,7 @@ class TestValidateBindAddressReturnType:
     
     async def test_validate_bind_address_return_type_has_correct_types(self):
         """Test that the tuple contains bool and str."""
-        from MetasploitMCP import validate_bind_address
+        from metasploit_mcp.server import validate_bind_address
         
         result = await validate_bind_address("0.0.0.0")
         is_valid, error_msg = result
@@ -267,7 +267,7 @@ class TestValidateBindAddressReturnType:
     
     async def test_validate_bind_address_all_paths_return_tuple(self):
         """Test all code paths return Tuple[bool, str]."""
-        from MetasploitMCP import validate_bind_address
+        from metasploit_mcp.server import validate_bind_address
         
         test_cases = [
             ("0.0.0.0", "wildcard IPv4"),
@@ -278,7 +278,7 @@ class TestValidateBindAddressReturnType:
         ]
         
         for address, description in test_cases:
-            with patch('MetasploitMCP.get_local_ip_addresses', return_value=['127.0.0.1', '::1']):
+            with patch('metasploit_mcp.server.get_local_ip_addresses', return_value=['127.0.0.1', '::1']):
                 result = await validate_bind_address(address)
                 assert isinstance(result, tuple), \
                     f"Failed for {description}: Expected tuple, got {type(result)}"

@@ -9,7 +9,7 @@ import os
 from unittest.mock import Mock, patch
 from typing import Dict, Any, Union
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock the dependencies that aren't available in test environment
@@ -30,7 +30,7 @@ sys.modules['fastmcp.client'] = Mock()
 sys.modules['fastmcp.client.transports'] = Mock()
 
 # Import the function we want to test
-from MetasploitMCP import _parse_options_gracefully
+from metasploit_mcp.server import _parse_options_gracefully
 
 
 class TestParseOptionsGracefully:
@@ -239,7 +239,7 @@ class TestParseOptionsGracefully:
 
     def test_logging_behavior(self):
         """Test that logging occurs during string conversion."""
-        with patch('MetasploitMCP.logger') as mock_logger:
+        with patch('metasploit_mcp.server.logger') as mock_logger:
             _parse_options_gracefully("LHOST=192.168.1.100,LPORT=4444")
             # Should log the conversion
             assert mock_logger.info.call_count >= 1

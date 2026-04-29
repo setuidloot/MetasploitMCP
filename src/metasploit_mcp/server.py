@@ -45,21 +45,21 @@ except ImportError:
 
 if os.getenv('MSF_RPC_PROTOCOL', 'msgpack').lower() == 'jsonrpc':
     # Apply JSON-RPC monkeypatch BEFORE importing pymetasploit3 classes
-    import pymetasploit3_jsonrpc_patch  # noqa: F401
+    from . import jsonrpc_patch  # noqa: F401
 
     # Import pymetasploit3 modules
     import pymetasploit3.utils
     import pymetasploit3.msfrpc
 
     # Apply patch by passing the modules directly
-    if pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled():
-        pymetasploit3_jsonrpc_patch.apply_patch(pymetasploit3.utils, pymetasploit3.msfrpc)
+    if jsonrpc_patch._is_jsonrpc_enabled():
+        jsonrpc_patch.apply_patch(pymetasploit3.utils, pymetasploit3.msfrpc)
 
 # Now import the classes - they will use the patched methods
 from pymetasploit3.msfrpc import MsfConsole, MsfRpcClient, MsfRpcError
 
 # --- Event Loop Monitoring ---
-from event_loop_monitor import (
+from .event_loop_monitor import (
     configure_event_loop_debugging, stop_event_loop_monitoring,
     get_monitoring_stats, check_event_loop_health
 )
@@ -442,7 +442,7 @@ def initialize_instance_manager():
         return None
     
     try:
-        from metasploit_instance_manager import MetasploitInstanceManager
+        from .instance_manager import MetasploitInstanceManager
         
         base_port = int(os.getenv('METASPLOIT_PORT_START', '55553'))
         timeout = int(os.getenv('METASPLOIT_INSTANCE_TIMEOUT', '1800'))
@@ -5304,115 +5304,7 @@ async def validate_bind_address(bind_address: str) -> Tuple[bool, str]:
     """
     return await asyncio.to_thread(_validate_bind_address_sync, bind_address)
 
+
 if __name__ == "__main__":
-    # Initialize MSF Client - Critical for server function
-    try:
-        initialize_msf_client()
-    except (ValueError, ConnectionError, RuntimeError) as e:
-        logger.critical(f"CRITICAL: Failed to initialize Metasploit client on startup: {e}. Server cannot function.")
-        sys.exit(1) # Exit if MSF connection fails at start
-
-    # Configure event loop debugging if enabled via environment variables
-    # Set ASYNCIO_DEBUG=true and/or EVENT_LOOP_WATCHDOG=true to enable
-    configure_event_loop_debugging()
-    
-    # Set custom exception handler for asyncio event loop to handle SSE disconnection errors
-    # This must be done before starting the server
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If loop is already running, we need to set it in a different way
-            # For now, we'll set it when the loop is created
-            logger.debug("Event loop is already running, exception handler will be set on next loop creation")
-        else:
-            loop.set_exception_handler(handle_asyncio_exception)
-            logger.debug("Custom asyncio exception handler installed for SSE error handling")
-    except RuntimeError:
-        # No event loop exists yet, it will be created by FastMCP
-        # We'll set the handler after the loop is created
-        logger.debug("No event loop exists yet, will set exception handler after loop creation")
-
-    # --- Setup argument parser for transport mode and server configuration ---
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Run Streamlined Metasploit MCP Server')
-    parser.add_argument(
-        '--transport', 
-        choices=['http', 'stdio'], 
-        default='http',
-        help='MCP transport mode to use (http=HTTP POST, stdio=direct pipe)'
-    )
-    parser.add_argument('--host', default='127.0.0.1', help='Host to bind the HTTP server to (default: 127.0.0.1)')
-    parser.add_argument('--port', type=int, default=None, help='Port to listen on (default: find available from 8085)')
-    parser.add_argument('--reload', action='store_true', help='Enable auto-reload (for development)')
-    parser.add_argument('--find-port', action='store_true', help='Force finding an available port starting from --port or 8085')
-    args = parser.parse_args()
-
-    if args.transport == 'stdio':
-        logger.info("Starting MCP server in STDIO transport mode.")
-        try:
-            mcp.run(transport="stdio")
-        except Exception as e:
-            logger.exception("Error during MCP stdio run loop.")
-            sys.exit(1)
-        finally:
-            # Clean up MSF resources
-            logger.info("Shutting down - cleaning up MSF resources...")
-            cleanup_msf_client()
-            # Clean up event loop monitoring
-            stop_event_loop_monitoring()
-            logger.info("Shutdown complete.")
-        logger.info("MCP stdio server finished.")
-    else:  # HTTP mode (default)
-        logger.info("Starting MCP server in HTTP transport mode.")
-        
-        # Check port availability
-        check_host = args.host if args.host != '0.0.0.0' else '127.0.0.1'
-        selected_port = args.port
-        if selected_port is None or args.find_port:
-            start_port = selected_port if selected_port is not None else 8085
-            selected_port = find_available_port(start_port, host=check_host)
-
-        # Update FastMCP settings with command line arguments
-        mcp.settings.host = args.host
-        mcp.settings.port = selected_port
-        
-        logger.info(f"Starting FastMCP HTTP server on http://{args.host}:{selected_port}")
-        logger.info(f"MCP Endpoint:    http://{args.host}:{selected_port}/mcp")
-        logger.info(f"Health Check:    http://{args.host}:{selected_port}/health")
-        logger.info(f"Service Info:    http://{args.host}:{selected_port}/")
-        logger.info(f"Payload Save Directory: {PAYLOAD_SAVE_DIR}")
-        
-        # Ensure exception handler is set before starting the server
-        # FastMCP will create a new event loop if needed
-        async def setup_exception_handler():
-            """Set exception handler after event loop is created."""
-            try:
-                loop = asyncio.get_running_loop()
-                loop.set_exception_handler(handle_asyncio_exception)
-                logger.debug("Custom asyncio exception handler installed for SSE error handling")
-            except RuntimeError:
-                # Loop not running, will be set when loop starts
-                pass
-        
-        # Try to set exception handler now if possible
-        try:
-            loop = asyncio.get_event_loop()
-            if not loop.is_running():
-                loop.set_exception_handler(handle_asyncio_exception)
-        except RuntimeError:
-            # No loop exists yet, will be created by FastMCP
-            pass
-        
-        try:
-            mcp.run(transport="streamable-http")
-        except Exception as e:
-            logger.exception("Error during MCP HTTP server run.")
-            sys.exit(1)
-        finally:
-            # Clean up MSF resources
-            logger.info("Shutting down - cleaning up MSF resources...")
-            cleanup_msf_client()
-            # Clean up event loop monitoring
-            stop_event_loop_monitoring()
-            logger.info("Shutdown complete.")
+    from . import main
+    main()

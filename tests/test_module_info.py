@@ -15,7 +15,7 @@ import pathlib
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 
@@ -105,7 +105,7 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_success(self, sample_module_info, sample_options):
         """Test successful module description retrieval."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         # Mock client.call to return different values based on the RPC method
@@ -117,7 +117,7 @@ class TestDescribeModule:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('unix/ftp/proftpd_modcopy_exec', 'exploit')
         
         assert result['status'] == 'success'
@@ -133,7 +133,7 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_with_full_path(self, sample_module_info, sample_options):
         """Test describe_module when full path is provided (exploit/...)."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         # Mock client.call to return different values based on the RPC method
@@ -145,7 +145,7 @@ class TestDescribeModule:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             # Provide full path with exploit/ prefix
             result = await describe_module.fn('exploit/unix/ftp/proftpd_modcopy_exec', 'auxiliary')
         
@@ -156,14 +156,14 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_not_found(self):
         """Test describe_module when module is not found."""
-        from MetasploitMCP import describe_module, _find_similar_modules
+        from metasploit_mcp.server import describe_module, _find_similar_modules
         
         mock_client = MockMsfRpcClient()
         mock_client.call = Mock(return_value=False)
         mock_client.modules.exploits = ['windows/smb/ms17_010_eternalblue']
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
-            with patch('MetasploitMCP._find_similar_modules', new_callable=AsyncMock, return_value=[]):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
+            with patch('metasploit_mcp.server._find_similar_modules', new_callable=AsyncMock, return_value=[]):
                 result = await describe_module.fn('nonexistent/module', 'exploit')
         
         assert result['status'] == 'not_found'
@@ -173,7 +173,7 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_error_response(self):
         """Test describe_module when MSF returns an error."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         mock_client.call = Mock(return_value={
@@ -182,8 +182,8 @@ class TestDescribeModule:
             'error_class': 'Msf::RPC::Exception'
         })
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
-            with patch('MetasploitMCP._find_similar_modules', new_callable=AsyncMock, return_value=[]):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
+            with patch('metasploit_mcp.server._find_similar_modules', new_callable=AsyncMock, return_value=[]):
                 result = await describe_module.fn('invalid/module', 'exploit')
         
         assert result['status'] == 'error'
@@ -192,11 +192,11 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_timeout(self):
         """Test describe_module handles timeout gracefully."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError()):
                 result = await describe_module.fn('some/module', 'exploit')
         
@@ -206,7 +206,7 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_auxiliary(self):
         """Test describe_module for auxiliary modules."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         aux_info = {
             'name': 'SMB Version Detection',
@@ -231,7 +231,7 @@ class TestDescribeModule:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('scanner/smb/smb_version', 'auxiliary')
         
         assert result['status'] == 'success'
@@ -240,7 +240,7 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_payload(self):
         """Test describe_module for payload modules."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         payload_info = {
             'name': 'Linux Meterpreter Reverse TCP',
@@ -265,7 +265,7 @@ class TestDescribeModule:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('linux/x64/meterpreter_reverse_tcp', 'payload')
         
         assert result['status'] == 'success'
@@ -275,7 +275,7 @@ class TestDescribeModule:
     @pytest.mark.asyncio
     async def test_describe_module_options_parsing(self, sample_module_info):
         """Test that options are properly structured."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         test_options = {
             'SSL': {'type': 'bool', 'required': False, 'default': False, 'desc': 'Use SSL'},
@@ -292,7 +292,7 @@ class TestDescribeModule:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         assert result['status'] == 'success'
@@ -370,9 +370,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_success(self, temp_docs_dir):
         """Test successful documentation retrieval."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             result = await get_module_documentation.fn('exploit/unix/ftp/proftpd_modcopy_exec')
         
         assert result['status'] == 'success'
@@ -383,9 +383,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_without_type_prefix(self, temp_docs_dir):
         """Test documentation retrieval without type prefix (tries all types)."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             # Should find it by trying exploit/ prefix
             result = await get_module_documentation.fn('windows/smb/ms17_010_eternalblue')
         
@@ -395,9 +395,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_not_found(self, temp_docs_dir):
         """Test documentation not found scenario."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             result = await get_module_documentation.fn('exploit/nonexistent/module')
         
         assert result['status'] == 'not_found'
@@ -407,9 +407,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_with_suggestions(self, temp_docs_dir):
         """Test that similar documentation files are suggested when exact match not found."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             # Search for something close to proftpd
             result = await get_module_documentation.fn('exploit/unix/ftp/proftpd')
         
@@ -420,9 +420,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_dir_not_exists(self):
         """Test when documentation directory doesn't exist."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', '/nonexistent/path'):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', '/nonexistent/path'):
             result = await get_module_documentation.fn('any/module')
         
         assert result['status'] == 'not_available'
@@ -432,9 +432,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_auxiliary_module(self, temp_docs_dir):
         """Test documentation retrieval for auxiliary modules."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             result = await get_module_documentation.fn('auxiliary/scanner/http/http_version')
         
         assert result['status'] == 'success'
@@ -443,9 +443,9 @@ Displays version information about target HTTP servers.
     @pytest.mark.asyncio
     async def test_get_documentation_normalizes_path(self, temp_docs_dir):
         """Test that paths are properly normalized."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             # Test with leading/trailing slashes
             result = await get_module_documentation.fn('/exploit/unix/ftp/proftpd_modcopy_exec/')
         
@@ -477,7 +477,7 @@ class TestFindSimilarDocumentationFiles:
     @pytest.mark.asyncio
     async def test_find_similar_by_keyword(self, temp_docs_dir):
         """Test finding similar files by keyword matching."""
-        from MetasploitMCP import _find_similar_documentation_files
+        from metasploit_mcp.server import _find_similar_documentation_files
         
         suggestions = await _find_similar_documentation_files(
             temp_docs_dir, 
@@ -490,7 +490,7 @@ class TestFindSimilarDocumentationFiles:
     @pytest.mark.asyncio
     async def test_find_similar_multiple_matches(self, temp_docs_dir):
         """Test finding multiple similar files."""
-        from MetasploitMCP import _find_similar_documentation_files
+        from metasploit_mcp.server import _find_similar_documentation_files
         
         suggestions = await _find_similar_documentation_files(
             temp_docs_dir,
@@ -504,7 +504,7 @@ class TestFindSimilarDocumentationFiles:
     @pytest.mark.asyncio
     async def test_find_similar_no_matches(self, temp_docs_dir):
         """Test when no similar files are found."""
-        from MetasploitMCP import _find_similar_documentation_files
+        from metasploit_mcp.server import _find_similar_documentation_files
         
         suggestions = await _find_similar_documentation_files(
             temp_docs_dir,
@@ -517,7 +517,7 @@ class TestFindSimilarDocumentationFiles:
     @pytest.mark.asyncio
     async def test_find_similar_respects_max_suggestions(self, temp_docs_dir):
         """Test that max_suggestions limit is respected."""
-        from MetasploitMCP import _find_similar_documentation_files
+        from metasploit_mcp.server import _find_similar_documentation_files
         
         suggestions = await _find_similar_documentation_files(
             temp_docs_dir,
@@ -530,7 +530,7 @@ class TestFindSimilarDocumentationFiles:
     @pytest.mark.asyncio
     async def test_find_similar_empty_path(self):
         """Test with non-existent path."""
-        from MetasploitMCP import _find_similar_documentation_files
+        from metasploit_mcp.server import _find_similar_documentation_files
         
         with tempfile.TemporaryDirectory() as tmpdir:
             docs_path = pathlib.Path(tmpdir)
@@ -566,7 +566,7 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
     @pytest.mark.asyncio
     async def test_workflow_describe_then_get_docs(self, temp_docs_dir):
         """Test the recommended workflow: describe_module -> get_module_documentation."""
-        from MetasploitMCP import describe_module, get_module_documentation
+        from metasploit_mcp.server import describe_module, get_module_documentation
         
         # Setup describe_module mocks
         module_info = {
@@ -594,7 +594,7 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
         mock_client.call = Mock(side_effect=mock_call)
         
         # Step 1: describe_module to get options
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             info_result = await describe_module.fn('unix/ftp/proftpd_modcopy_exec', 'exploit')
         
         assert info_result['status'] == 'success'
@@ -602,7 +602,7 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
         assert 'SITEPATH' in info_result['options']
         
         # Step 2: get_module_documentation for usage examples
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             docs_result = await get_module_documentation.fn('exploit/unix/ftp/proftpd_modcopy_exec')
         
         assert docs_result['status'] == 'success'
@@ -613,7 +613,7 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
     @pytest.mark.asyncio
     async def test_describe_module_then_docs_not_found(self, temp_docs_dir):
         """Test when module exists but documentation doesn't."""
-        from MetasploitMCP import describe_module, get_module_documentation
+        from metasploit_mcp.server import describe_module, get_module_documentation
         
         module_info = {
             'name': 'Some Module Without Docs',
@@ -631,14 +631,14 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
         mock_module_obj.options = {'RHOSTS': {'type': 'address', 'required': True, 'desc': 'Target'}}
         
         # describe_module should succeed
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
-            with patch('MetasploitMCP._get_module_object', new_callable=AsyncMock, return_value=mock_module_obj):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
+            with patch('metasploit_mcp.server._get_module_object', new_callable=AsyncMock, return_value=mock_module_obj):
                 info_result = await describe_module.fn('some/module/without_docs', 'exploit')
         
         assert info_result['status'] == 'success'
         
         # But documentation won't exist
-        with patch('MetasploitMCP.MSF_DOCS_PATH', str(temp_docs_dir)):
+        with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             docs_result = await get_module_documentation.fn('exploit/some/module/without_docs')
         
         assert docs_result['status'] == 'not_found'
@@ -651,7 +651,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_describe_module_empty_options(self):
         """Test when module has no options."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         def mock_call(method, args):
@@ -662,7 +662,7 @@ class TestEdgeCases:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         assert result['status'] == 'success'
@@ -671,7 +671,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_describe_module_options_exception(self):
         """Test graceful handling when options retrieval fails."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         call_count = [0]
         def mock_call(method, args):
@@ -685,7 +685,7 @@ class TestEdgeCases:
         mock_client = MockMsfRpcClient()
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         # Should still return basic info even if options fail
@@ -695,7 +695,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_describe_module_malformed_references(self):
         """Test handling of malformed references in module info."""
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         module_info = {
             'name': 'Test',
@@ -717,7 +717,7 @@ class TestEdgeCases:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         assert result['status'] == 'success'
@@ -727,7 +727,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_get_documentation_file_read_error(self):
         """Test handling of file read errors."""
-        from MetasploitMCP import get_module_documentation
+        from metasploit_mcp.server import get_module_documentation
         
         with tempfile.TemporaryDirectory() as tmpdir:
             docs_path = pathlib.Path(tmpdir)
@@ -737,7 +737,7 @@ class TestEdgeCases:
             bad_file = docs_path / 'exploit' / 'bad_module.md'
             bad_file.write_text('test')
             
-            with patch('MetasploitMCP.MSF_DOCS_PATH', str(docs_path)):
+            with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(docs_path)):
                 with patch.object(pathlib.Path, 'read_text', side_effect=PermissionError("Access denied")):
                     result = await get_module_documentation.fn('exploit/bad_module')
             
@@ -747,12 +747,12 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_describe_module_rpc_connection_error(self):
         """Test handling of RPC connection errors."""
-        from MetasploitMCP import describe_module, MsfRpcError
+        from metasploit_mcp.server import describe_module, MsfRpcError
         
         mock_client = MockMsfRpcClient()
         mock_client.call = Mock(side_effect=MsfRpcError("Connection refused"))
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         assert result['status'] == 'error'
@@ -765,7 +765,7 @@ class TestEdgeCases:
         Regression test for robustness - if RPC returns non-dict data, 
         the function should handle it gracefully.
         """
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         def mock_call(method, args):
@@ -777,7 +777,7 @@ class TestEdgeCases:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         assert result['status'] == 'success'
@@ -792,7 +792,7 @@ class TestEdgeCases:
         
         Edge case test for robustness.
         """
-        from MetasploitMCP import describe_module
+        from metasploit_mcp.server import describe_module
         
         mock_client = MockMsfRpcClient()
         def mock_call(method, args):
@@ -803,7 +803,7 @@ class TestEdgeCases:
             return {}
         mock_client.call = Mock(side_effect=mock_call)
         
-        with patch('MetasploitMCP.get_msf_client', return_value=mock_client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             result = await describe_module.fn('test/module', 'exploit')
         
         assert result['status'] == 'success'

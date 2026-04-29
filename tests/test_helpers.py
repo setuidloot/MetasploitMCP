@@ -10,7 +10,7 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from typing import Dict, Any
 
-# Add the parent directory to the path to import MetasploitMCP
+# Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock the dependencies that aren't available in test environment
@@ -58,7 +58,7 @@ sys.modules['pymetasploit3.msfrpc'].MsfConsole = MockMsfConsole
 sys.modules['pymetasploit3.msfrpc'].MsfRpcError = MockMsfRpcError
 
 # Import after mocking
-from MetasploitMCP import (
+from metasploit_mcp.server import (
     _get_module_object, _set_module_options, initialize_msf_client, 
     get_msf_client, get_msf_console, run_command_safely,
     find_available_port, InvalidModuleError, _find_similar_modules,
@@ -69,14 +69,14 @@ from MetasploitMCP import (
 class TestMsfClientFunctions:
     """Test MSF client initialization and management functions."""
 
-    @patch('MetasploitMCP.MSF_PASSWORD', 'test-password')
-    @patch('MetasploitMCP.MSF_SERVER', '127.0.0.1')
-    @patch('MetasploitMCP.MSF_PORT_STR', '55553')
-    @patch('MetasploitMCP.MSF_SSL_STR', 'false')
+    @patch('metasploit_mcp.server.MSF_PASSWORD', 'test-password')
+    @patch('metasploit_mcp.server.MSF_SERVER', '127.0.0.1')
+    @patch('metasploit_mcp.server.MSF_PORT_STR', '55553')
+    @patch('metasploit_mcp.server.MSF_SSL_STR', 'false')
     def test_initialize_msf_client_success(self):
         """Test successful MSF client initialization."""
-        with patch('MetasploitMCP._msf_client_instance', None):
-            with patch('MetasploitMCP.MsfRpcClient') as mock_client_class:
+        with patch('metasploit_mcp.server._msf_client_instance', None):
+            with patch('metasploit_mcp.server.MsfRpcClient') as mock_client_class:
                 mock_client = Mock()
                 mock_client.core.version = {'version': '6.3.0'}
                 mock_client_class.return_value = mock_client
@@ -91,23 +91,23 @@ class TestMsfClientFunctions:
                     ssl=False
                 )
 
-    @patch('MetasploitMCP.MSF_PORT_STR', 'invalid-port')
+    @patch('metasploit_mcp.server.MSF_PORT_STR', 'invalid-port')
     def test_initialize_msf_client_invalid_port(self):
         """Test MSF client initialization with invalid port."""
-        with patch('MetasploitMCP._msf_client_instance', None):
+        with patch('metasploit_mcp.server._msf_client_instance', None):
             with pytest.raises(ValueError, match="Invalid MSF connection parameters"):
                 initialize_msf_client()
 
     def test_get_msf_client_not_initialized(self):
         """Test get_msf_client when client not initialized."""
-        with patch('MetasploitMCP._msf_client_instance', None):
+        with patch('metasploit_mcp.server._msf_client_instance', None):
             with pytest.raises(ConnectionError, match="not been initialized"):
                 get_msf_client()
 
     def test_get_msf_client_initialized(self):
         """Test get_msf_client when client is initialized."""
         mock_client = Mock()
-        with patch('MetasploitMCP._msf_client_instance', mock_client):
+        with patch('metasploit_mcp.server._msf_client_instance', mock_client):
             result = get_msf_client()
             assert result is mock_client
 
@@ -119,7 +119,7 @@ class TestGetModuleObject:
     def mock_client(self):
         """Fixture providing a mock MSF client."""
         client = Mock()
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             yield client
 
     @pytest.mark.asyncio
@@ -255,7 +255,7 @@ class TestFindSimilarModules:
     def mock_client(self):
         """Fixture providing a mock MSF client."""
         client = Mock()
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             yield client
 
     @pytest.mark.asyncio
@@ -404,7 +404,7 @@ class TestGetMsfConsole:
     def mock_client(self):
         """Fixture providing a mock MSF client."""
         client = Mock()
-        with patch('MetasploitMCP.get_msf_client', return_value=client):
+        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
             yield client
 
     @pytest.mark.asyncio
@@ -415,7 +415,7 @@ class TestGetMsfConsole:
         mock_client.consoles.destroy.return_value = 'destroyed'
 
         # Mock the global client instance for cleanup
-        with patch('MetasploitMCP._msf_client_instance', mock_client):
+        with patch('metasploit_mcp.server._msf_client_instance', mock_client):
             async with get_msf_console() as console:
                 assert console is mock_console
                 assert console.cid == 'test-console-123'
