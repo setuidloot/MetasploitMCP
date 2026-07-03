@@ -81,7 +81,7 @@ def _mock_msf_client_instance():
     console.write.return_value = True
     client.consoles.console.return_value = console
     client.consoles.destroy.return_value = "destroyed"
-    with patch.object(sys.modules['MetasploitMCP'], "_msf_client_instance", client):
+    with patch.object(sys.modules['metasploit_mcp.server'], "_msf_client_instance", client):
         yield client
 
 

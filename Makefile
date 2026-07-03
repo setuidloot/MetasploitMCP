@@ -51,19 +51,19 @@ dev-setup: dev-install ## Setup: Complete development environment setup
 # Development targets
 run: ## Development: Run the MCP server in development mode
 	@echo "$(BLUE)Starting MetasploitMCP server...$(RESET)"
-	poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+	poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 
 run-debug: ## Development: Run server with debug logging
 	@echo "$(BLUE)Starting MetasploitMCP server in debug mode...$(RESET)"
-	LOG_LEVEL=DEBUG poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+	LOG_LEVEL=DEBUG poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 
 shell: ## Development: Open Poetry shell
 	poetry shell
 
 # Testing targets
-test: ## Testing: Run all tests using custom test runner
+test: ## Testing: Run all tests
 	@echo "$(BLUE)Running all tests...$(RESET)"
-	poetry run python run_all_tests.py
+	poetry run pytest
 
 test-unit: ## Testing: Run unit tests only
 	@echo "$(BLUE)Running unit tests...$(RESET)"
@@ -75,7 +75,7 @@ test-integration: ## Testing: Run integration tests only
 
 test-coverage: ## Testing: Run tests with coverage report
 	@echo "$(BLUE)Running tests with coverage...$(RESET)"
-	poetry run pytest tests/ --cov=. --cov-report=html --cov-report=term-missing
+	poetry run pytest --cov=metasploit_mcp --cov-report=html --cov-report=term-missing
 	@echo "$(GREEN)Coverage report: file://$(PWD)/htmlcov/index.html$(RESET)"
 
 test-watch: ## Testing: Run tests in watch mode (requires pytest-watch)
@@ -101,7 +101,7 @@ test-metasploitable3: ## Testing: Run integration tests against Metasploitable 3
 		echo "Usage: make test-metasploitable3 TARGET=10.0.2.15 LHOST=10.0.2.4 [LPORT=4444]"; \
 		exit 1; \
 	fi
-	poetry run python metasploitable3_test_harness.py \
+	poetry run python tests/harness.py \
 		--target $(TARGET) \
 		--lhost $(LHOST) \
 		--lport $(if $(LPORT),$(LPORT),4444)
@@ -117,26 +117,26 @@ test-metasploitable3-quick: ## Testing: Quick test against Metasploitable 3 (req
 
 list-metasploitable3-tests: ## Testing: List available Metasploitable 3 tests
 	@echo "$(BLUE)Available Metasploitable 3 exploit tests:$(RESET)"
-	poetry run python metasploitable3_test_harness.py --list-tests
+	poetry run python tests/harness.py --list-tests
 
 # Quality targets
 lint: ## Quality: Run all linting checks
 	@echo "$(BLUE)Running flake8...$(RESET)"
-	poetry run flake8 MetasploitMCP.py tests/
+	poetry run flake8 src tests
 	@echo "$(GREEN)✓ Linting passed!$(RESET)"
 
 format: ## Quality: Format code with black
 	@echo "$(BLUE)Formatting code with black...$(RESET)"
-	poetry run black MetasploitMCP.py tests/
+	poetry run black src tests
 	@echo "$(GREEN)✓ Code formatted!$(RESET)"
 
 format-check: ## Quality: Check if code is properly formatted
 	@echo "$(BLUE)Checking code formatting...$(RESET)"
-	poetry run black --check MetasploitMCP.py tests/
+	poetry run black --check src tests
 
 type-check: ## Quality: Run type checking with mypy
 	@echo "$(BLUE)Running type checks...$(RESET)"
-	poetry run mypy MetasploitMCP.py
+	poetry run mypy src
 	@echo "$(GREEN)✓ Type checking passed!$(RESET)"
 
 pre-commit: ## Quality: Run pre-commit hooks on all files

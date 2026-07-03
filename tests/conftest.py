@@ -8,30 +8,49 @@ import sys
 import os
 from unittest.mock import Mock, patch
 
+from tests import MockMsfRpcError
+
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(__file__))
 
 def pytest_configure(config):
     """Configure pytest with custom settings."""
     # Mock external dependencies that might not be available during testing
-    # We only mock pymetasploit3 since other dependencies (fastmcp, uvicorn, etc.) 
+    # We only mock pymetasploit3 since other dependencies (fastmcp, uvicorn, etc.)
     # are now proper installed dependencies
-    
-    # Create proper exception class for MsfRpcError
-    class MockMsfRpcError(Exception):
-        """Mock MSF RPC error that properly inherits from Exception."""
-        pass
-    
-    # Create mock module with proper exception class
+
+    # Create mock module with the canonical MsfRpcError exception class
     mock_msfrpc = Mock()
     mock_msfrpc.MsfRpcError = MockMsfRpcError
     mock_msfrpc.MsfRpcClient = Mock
     mock_msfrpc.MsfConsole = Mock
-    
+
     if 'pymetasploit3.msfrpc' not in sys.modules:
         sys.modules['pymetasploit3.msfrpc'] = mock_msfrpc
     if 'pymetasploit3' not in sys.modules:
         sys.modules['pymetasploit3'] = Mock(msfrpc=mock_msfrpc)
+
+
+@pytest.fixture(autouse=True)
+def _stable_msf_error():
+    """Keep a single, stable ``MsfRpcError`` class across the server module and
+    the mocked ``pymetasploit3.msfrpc``.
+
+    Several test modules replace ``sys.modules['pymetasploit3.msfrpc']`` at
+    import time with their own mock (and historically their own error class),
+    so by the time tests run the class identity could differ from the one
+    ``metasploit_mcp.server`` captured at import. Since ``except MsfRpcError``
+    is resolved against the server module's globals at runtime, we re-assert the
+    canonical class on both sides before every test. This makes error-handling
+    tests deterministic regardless of collection order.
+    """
+    msfrpc = sys.modules.get('pymetasploit3.msfrpc')
+    if msfrpc is not None:
+        msfrpc.MsfRpcError = MockMsfRpcError
+    server = sys.modules.get('metasploit_mcp.server')
+    if server is not None:
+        server.MsfRpcError = MockMsfRpcError
+    yield
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers automatically."""

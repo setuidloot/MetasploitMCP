@@ -8,6 +8,7 @@ a real Metasploitable 3 target or active MCP server.
 
 import asyncio
 import json
+import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
@@ -109,7 +110,8 @@ class TestMetasploitMCPClient:
     def test_client_initialization(self, client):
         """Test client initialization."""
         assert client.mcp_url == "http://test-server:8085"
-        assert client.mcp_endpoint == "http://test-server:8085/mcp"
+        assert client.use_gateway is False
+        assert client.tool_prefix == ""
     
     def test_client_url_normalization(self):
         """Test that trailing slashes are removed."""
@@ -118,63 +120,50 @@ class TestMetasploitMCPClient:
     
     @pytest.mark.asyncio
     async def test_call_tool_success(self, client):
-        """Test successful tool call."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "content": [
-                    {"type": "text", "text": "Success"}
-                ]
-            }
-        }
-        
-        with patch.object(client.client, 'post', new=AsyncMock(return_value=mock_response)) as mock_post:
-            result = await client.call_tool("test_tool", {"arg": "value"})
-            
-            assert result["success"] is True
-            assert result["data"] == "Success"
-            
-            # Verify headers were sent
-            call_kwargs = mock_post.call_args.kwargs
-            assert "headers" in call_kwargs
-            assert call_kwargs["headers"]["Content-Type"] == "application/json"
-            assert call_kwargs["headers"]["Accept"] == "application/json, text/event-stream"
-    
+        """Test a successful tool call via the MCP client (tool.ainvoke)."""
+        mock_tool = MagicMock()
+        mock_tool.name = "test_tool"
+        mock_tool.ainvoke = AsyncMock(return_value="Success")
+        client._tools = [mock_tool]
+
+        result = await client.call_tool("test_tool", {"arg": "value"})
+
+        assert result == {"success": True, "data": "Success"}
+        mock_tool.ainvoke.assert_awaited_once_with({"arg": "value"})
+
+    @pytest.mark.asyncio
+    async def test_call_tool_not_found(self, client):
+        """Test that calling an unknown tool raises."""
+        client._tools = []  # no tools available
+        with pytest.raises(Exception, match="not found"):
+            await client.call_tool("missing_tool", {})
+
     @pytest.mark.asyncio
     async def test_call_tool_error(self, client):
-        """Test tool call with error response."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "error": {
-                "code": -1,
-                "message": "Tool failed"
-            }
-        }
-        
-        with patch.object(client.client, 'post', new=AsyncMock(return_value=mock_response)):
-            with pytest.raises(Exception, match="Tool call failed"):
-                await client.call_tool("test_tool", {})
-    
+        """Test that an error raised during tool invocation propagates."""
+        mock_tool = MagicMock()
+        mock_tool.name = "test_tool"
+        mock_tool.ainvoke = AsyncMock(side_effect=Exception("Tool failed"))
+        client._tools = [mock_tool]
+
+        with pytest.raises(Exception, match="Tool failed"):
+            await client.call_tool("test_tool", {})
+
     @pytest.mark.asyncio
     async def test_run_exploit(self, client):
-        """Test run_exploit wrapper method."""
+        """Test run_exploit wrapper maps to the run_exploit tool."""
         with patch.object(client, 'call_tool', new=AsyncMock(return_value={"success": True})) as mock_call:
             await client.run_exploit(
-                module="exploit/test",
+                module_name="exploit/test",
                 options={"RHOSTS": "10.0.0.1"},
-                payload="test/payload"
+                payload_name="test/payload",
             )
-            
+
             mock_call.assert_called_once_with("run_exploit", {
-                "module": "exploit/test",
+                "module_name": "exploit/test",
                 "options": {"RHOSTS": "10.0.0.1"},
-                "payload": "test/payload"
+                "payload_name": "test/payload",
+                "run_as_job": False,
             })
     
     @pytest.mark.asyncio
@@ -197,16 +186,16 @@ class TestMetasploitMCPClient:
     
     @pytest.mark.asyncio
     async def test_start_listener(self, client):
-        """Test start_listener wrapper method."""
+        """Test start_listener wrapper maps to the start_listener tool."""
         with patch.object(client, 'call_tool', new=AsyncMock(return_value={"job_id": 1})) as mock_call:
             await client.start_listener(
-                payload="linux/x86/meterpreter/reverse_tcp",
+                payload_type="linux/x86/meterpreter/reverse_tcp",
                 lhost="10.0.0.1",
                 lport=4444
             )
-            
+
             mock_call.assert_called_once_with("start_listener", {
-                "payload": "linux/x86/meterpreter/reverse_tcp",
+                "payload_type": "linux/x86/meterpreter/reverse_tcp",
                 "lhost": "10.0.0.1",
                 "lport": 4444
             })
@@ -384,22 +373,22 @@ class TestMetasploitable3TestHarness:
         assert results[0].success is True
         assert results[1].success is False
     
-    def test_print_summary(self, harness, capsys):
-        """Test printing test summary."""
+    def test_print_summary(self, harness, caplog):
+        """Test the test summary (emitted via the logging module)."""
         harness.results = [
             TestResult(test_name="Test 1", success=True, session_id=1, duration_seconds=2.5),
             TestResult(test_name="Test 2", success=False, error="Failed", duration_seconds=1.5),
             TestResult(test_name="Test 3", success=True, session_id=2, duration_seconds=3.0),
         ]
-        
-        harness.print_summary()
-        
-        captured = capsys.readouterr()
-        assert "TEST SUMMARY" in captured.out
-        assert "Total Tests: 3" in captured.out
-        assert "Passed: 2" in captured.out
-        assert "Failed: 1" in captured.out
-        assert "Success Rate: 66.7%" in captured.out
+
+        with caplog.at_level(logging.INFO):
+            harness.print_summary()
+
+        assert "TEST SUMMARY" in caplog.text
+        assert "Total Tests: 3" in caplog.text
+        assert "Passed: 2" in caplog.text
+        assert "Failed: 1" in caplog.text
+        assert "Success Rate: 66.7%" in caplog.text
     
     @pytest.mark.asyncio
     async def test_cleanup(self, harness):
@@ -505,15 +494,16 @@ class TestErrorHandling:
     
     @pytest.mark.asyncio
     async def test_invalid_json_response(self):
-        """Test handling of invalid JSON responses."""
+        """Test that a decoding error raised during tool invocation propagates."""
         client = MetasploitMCPClient("http://test-server:8085")
-        
-        mock_response = MagicMock()
-        mock_response.json.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
-        
-        with patch.object(client.client, 'post', new=AsyncMock(return_value=mock_response)):
-            with pytest.raises(json.JSONDecodeError):
-                await client.call_tool("test_tool", {})
+
+        mock_tool = MagicMock()
+        mock_tool.name = "test_tool"
+        mock_tool.ainvoke = AsyncMock(side_effect=json.JSONDecodeError("Invalid JSON", "", 0))
+        client._tools = [mock_tool]
+
+        with pytest.raises(json.JSONDecodeError):
+            await client.call_tool("test_tool", {})
     
     @pytest.mark.asyncio
     async def test_timeout_handling(self):

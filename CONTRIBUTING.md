@@ -36,7 +36,7 @@ This project adheres to a code of conduct that we expect all contributors to fol
 
 3. **Verify Setup**
    ```bash
-   poetry run python run_all_tests.py
+   poetry run pytest
    ```
 
 ## How to Contribute
@@ -89,7 +89,7 @@ Before creating an issue, please:
 3. **Test Your Changes**
    ```bash
    # Run all tests
-   poetry run python run_all_tests.py
+   poetry run pytest
    
    # Run specific tests
    poetry run pytest tests/test_your_feature.py -v

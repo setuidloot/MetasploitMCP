@@ -69,8 +69,9 @@ class MockMsfModule:
     def payload_generate(self):
         return b"test_payload_bytes"
 
-class MockMsfRpcError(Exception):
-    pass
+# Use the canonical MsfRpcError so its identity matches the class that
+# metasploit_mcp.server catches at runtime (see tests/__init__.py).
+from tests import MockMsfRpcError
 
 # Apply mocks
 sys.modules['pymetasploit3.msfrpc'].MsfRpcClient = MockMsfRpcClient

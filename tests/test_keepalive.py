@@ -189,9 +189,9 @@ class TestToolsWithNoneContext:
     async def test_list_exploits_with_none_ctx(self, mock_msf_client, mock_asyncio_to_thread):
         """Test that list_exploits works correctly with ctx=None."""
         # Get the underlying function
-        list_exploits_fn = MetasploitMCP.list_exploits.fn
+        list_exploits_fn = MetasploitMCP.list_exploits
         
-        result = await list_exploits_fn(search_term="", ctx=None)
+        result = await list_exploits_fn(search="", ctx=None)
         
         assert isinstance(result, list)
         assert len(result) > 0
@@ -199,7 +199,7 @@ class TestToolsWithNoneContext:
     @pytest.mark.asyncio
     async def test_list_payloads_with_none_ctx(self, mock_msf_client, mock_asyncio_to_thread):
         """Test that list_payloads works correctly with ctx=None."""
-        list_payloads_fn = MetasploitMCP.list_payloads.fn
+        list_payloads_fn = MetasploitMCP.list_payloads
         
         result = await list_payloads_fn(platform="", arch="", ctx=None)
         
@@ -240,9 +240,9 @@ class TestToolsWithMockContext:
     @pytest.mark.asyncio
     async def test_list_exploits_reports_progress(self, mock_ctx, mock_msf_client, mock_asyncio_to_thread):
         """Test that list_exploits reports progress when ctx is provided."""
-        list_exploits_fn = MetasploitMCP.list_exploits.fn
+        list_exploits_fn = MetasploitMCP.list_exploits
         
-        result = await list_exploits_fn(search_term="", ctx=mock_ctx)
+        result = await list_exploits_fn(search="", ctx=mock_ctx)
         
         # Should have called report_progress at least twice (start and end)
         assert mock_ctx.report_progress.call_count >= 2
@@ -258,7 +258,7 @@ class TestToolsWithMockContext:
     @pytest.mark.asyncio
     async def test_list_payloads_reports_progress(self, mock_ctx, mock_msf_client, mock_asyncio_to_thread):
         """Test that list_payloads reports progress when ctx is provided."""
-        list_payloads_fn = MetasploitMCP.list_payloads.fn
+        list_payloads_fn = MetasploitMCP.list_payloads
         
         result = await list_payloads_fn(platform="", arch="", ctx=mock_ctx)
         
@@ -321,82 +321,82 @@ class TestFunctionSignatures:
     def test_list_exploits_ctx_is_optional(self):
         """Test that list_exploits has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.list_exploits.fn
+        fn = MetasploitMCP.list_exploits
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_list_payloads_ctx_is_optional(self):
         """Test that list_payloads has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.list_payloads.fn
+        fn = MetasploitMCP.list_payloads
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_generate_payload_ctx_is_optional(self):
         """Test that generate_payload has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.generate_payload.fn
+        fn = MetasploitMCP.generate_payload
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_run_exploit_ctx_is_optional(self):
         """Test that run_exploit has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.run_exploit.fn
+        fn = MetasploitMCP.run_exploit
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_run_post_module_ctx_is_optional(self):
         """Test that run_post_module has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.run_post_module.fn
+        fn = MetasploitMCP.run_post_module
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_run_auxiliary_module_ctx_is_optional(self):
         """Test that run_auxiliary_module has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.run_auxiliary_module.fn
+        fn = MetasploitMCP.run_auxiliary_module
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_send_session_command_ctx_is_optional(self):
         """Test that send_session_command has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.send_session_command.fn
+        fn = MetasploitMCP.send_session_command
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
     
     def test_start_listener_ctx_is_optional(self):
         """Test that start_listener has ctx as optional parameter."""
         import inspect
-        fn = MetasploitMCP.start_listener.fn
+        fn = MetasploitMCP.start_listener
         sig = inspect.signature(fn)
         params = sig.parameters
         
         assert 'ctx' in params
-        assert params['ctx'].default is None
+        assert params['ctx'].default is not inspect.Parameter.empty
 
 
 class TestKeepaliveConfiguration:

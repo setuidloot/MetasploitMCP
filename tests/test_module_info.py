@@ -118,7 +118,7 @@ class TestDescribeModule:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('unix/ftp/proftpd_modcopy_exec', 'exploit')
+            result = await describe_module('unix/ftp/proftpd_modcopy_exec', 'exploit')
         
         assert result['status'] == 'success'
         assert result['name'] == 'ProFTPD 1.3.5 Mod_Copy Command Execution'
@@ -147,7 +147,7 @@ class TestDescribeModule:
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             # Provide full path with exploit/ prefix
-            result = await describe_module.fn('exploit/unix/ftp/proftpd_modcopy_exec', 'auxiliary')
+            result = await describe_module('exploit/unix/ftp/proftpd_modcopy_exec', 'auxiliary')
         
         # Should extract type from path and use it
         assert result['status'] == 'success'
@@ -164,7 +164,7 @@ class TestDescribeModule:
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             with patch('metasploit_mcp.server._find_similar_modules', new_callable=AsyncMock, return_value=[]):
-                result = await describe_module.fn('nonexistent/module', 'exploit')
+                result = await describe_module('nonexistent/module', 'exploit')
         
         assert result['status'] == 'not_found'
         assert 'not found' in result['message'].lower()
@@ -184,7 +184,7 @@ class TestDescribeModule:
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             with patch('metasploit_mcp.server._find_similar_modules', new_callable=AsyncMock, return_value=[]):
-                result = await describe_module.fn('invalid/module', 'exploit')
+                result = await describe_module('invalid/module', 'exploit')
         
         assert result['status'] == 'error'
         assert 'Invalid module' in result['message']
@@ -198,7 +198,7 @@ class TestDescribeModule:
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError()):
-                result = await describe_module.fn('some/module', 'exploit')
+                result = await describe_module('some/module', 'exploit')
         
         assert result['status'] == 'error'
         assert 'timeout' in result['message'].lower()
@@ -232,7 +232,7 @@ class TestDescribeModule:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('scanner/smb/smb_version', 'auxiliary')
+            result = await describe_module('scanner/smb/smb_version', 'auxiliary')
         
         assert result['status'] == 'success'
         assert result['full_path'] == 'auxiliary/scanner/smb/smb_version'
@@ -266,7 +266,7 @@ class TestDescribeModule:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('linux/x64/meterpreter_reverse_tcp', 'payload')
+            result = await describe_module('linux/x64/meterpreter_reverse_tcp', 'payload')
         
         assert result['status'] == 'success'
         assert 'LHOST' in result['options']
@@ -293,7 +293,7 @@ class TestDescribeModule:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         assert result['status'] == 'success'
         assert result['options']['SSL']['type'] == 'bool'
@@ -373,7 +373,7 @@ Displays version information about target HTTP servers.
         from metasploit_mcp.server import get_module_documentation
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
-            result = await get_module_documentation.fn('exploit/unix/ftp/proftpd_modcopy_exec')
+            result = await get_module_documentation('exploit/unix/ftp/proftpd_modcopy_exec')
         
         assert result['status'] == 'success'
         assert 'ProFTPD mod_copy' in result['documentation']
@@ -387,7 +387,7 @@ Displays version information about target HTTP servers.
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             # Should find it by trying exploit/ prefix
-            result = await get_module_documentation.fn('windows/smb/ms17_010_eternalblue')
+            result = await get_module_documentation('windows/smb/ms17_010_eternalblue')
         
         assert result['status'] == 'success'
         assert 'EternalBlue' in result['documentation']
@@ -398,7 +398,7 @@ Displays version information about target HTTP servers.
         from metasploit_mcp.server import get_module_documentation
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
-            result = await get_module_documentation.fn('exploit/nonexistent/module')
+            result = await get_module_documentation('exploit/nonexistent/module')
         
         assert result['status'] == 'not_found'
         assert result['documentation'] is None
@@ -411,7 +411,7 @@ Displays version information about target HTTP servers.
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             # Search for something close to proftpd
-            result = await get_module_documentation.fn('exploit/unix/ftp/proftpd')
+            result = await get_module_documentation('exploit/unix/ftp/proftpd')
         
         assert result['status'] == 'not_found'
         # Should suggest the actual proftpd_modcopy_exec.md
@@ -423,7 +423,7 @@ Displays version information about target HTTP servers.
         from metasploit_mcp.server import get_module_documentation
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', '/nonexistent/path'):
-            result = await get_module_documentation.fn('any/module')
+            result = await get_module_documentation('any/module')
         
         assert result['status'] == 'not_available'
         assert 'not installed' in result['message'].lower()
@@ -435,7 +435,7 @@ Displays version information about target HTTP servers.
         from metasploit_mcp.server import get_module_documentation
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
-            result = await get_module_documentation.fn('auxiliary/scanner/http/http_version')
+            result = await get_module_documentation('auxiliary/scanner/http/http_version')
         
         assert result['status'] == 'success'
         assert 'HTTP Version Scanner' in result['documentation']
@@ -447,7 +447,7 @@ Displays version information about target HTTP servers.
         
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
             # Test with leading/trailing slashes
-            result = await get_module_documentation.fn('/exploit/unix/ftp/proftpd_modcopy_exec/')
+            result = await get_module_documentation('/exploit/unix/ftp/proftpd_modcopy_exec/')
         
         assert result['status'] == 'success'
 
@@ -595,7 +595,7 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
         
         # Step 1: describe_module to get options
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            info_result = await describe_module.fn('unix/ftp/proftpd_modcopy_exec', 'exploit')
+            info_result = await describe_module('unix/ftp/proftpd_modcopy_exec', 'exploit')
         
         assert info_result['status'] == 'success'
         assert 'RHOSTS' in info_result['options']
@@ -603,7 +603,7 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
         
         # Step 2: get_module_documentation for usage examples
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
-            docs_result = await get_module_documentation.fn('exploit/unix/ftp/proftpd_modcopy_exec')
+            docs_result = await get_module_documentation('exploit/unix/ftp/proftpd_modcopy_exec')
         
         assert docs_result['status'] == 'success'
         assert 'Scenarios' in docs_result['documentation']
@@ -633,13 +633,13 @@ Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
         # describe_module should succeed
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
             with patch('metasploit_mcp.server._get_module_object', new_callable=AsyncMock, return_value=mock_module_obj):
-                info_result = await describe_module.fn('some/module/without_docs', 'exploit')
+                info_result = await describe_module('some/module/without_docs', 'exploit')
         
         assert info_result['status'] == 'success'
         
         # But documentation won't exist
         with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(temp_docs_dir)):
-            docs_result = await get_module_documentation.fn('exploit/some/module/without_docs')
+            docs_result = await get_module_documentation('exploit/some/module/without_docs')
         
         assert docs_result['status'] == 'not_found'
         # Should still have options from describe_module to proceed
@@ -663,7 +663,7 @@ class TestEdgeCases:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         assert result['status'] == 'success'
         assert result['options'] == {}
@@ -686,7 +686,7 @@ class TestEdgeCases:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         # Should still return basic info even if options fail
         assert result['status'] == 'success'
@@ -718,7 +718,7 @@ class TestEdgeCases:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         assert result['status'] == 'success'
         # Should have parsed valid references
@@ -739,7 +739,7 @@ class TestEdgeCases:
             
             with patch('metasploit_mcp.server.MSF_DOCS_PATH', str(docs_path)):
                 with patch.object(pathlib.Path, 'read_text', side_effect=PermissionError("Access denied")):
-                    result = await get_module_documentation.fn('exploit/bad_module')
+                    result = await get_module_documentation('exploit/bad_module')
             
             assert result['status'] == 'error'
             assert 'error' in result['message'].lower()
@@ -753,7 +753,7 @@ class TestEdgeCases:
         mock_client.call = Mock(side_effect=MsfRpcError("Connection refused"))
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         assert result['status'] == 'error'
         assert 'rpc' in result['message'].lower() or 'connection' in result['message'].lower()
@@ -778,7 +778,7 @@ class TestEdgeCases:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         assert result['status'] == 'success'
         assert 'options' in result
@@ -804,7 +804,7 @@ class TestEdgeCases:
         mock_client.call = Mock(side_effect=mock_call)
         
         with patch('metasploit_mcp.server.get_msf_client', return_value=mock_client):
-            result = await describe_module.fn('test/module', 'exploit')
+            result = await describe_module('test/module', 'exploit')
         
         assert result['status'] == 'success'
         assert 'options' in result

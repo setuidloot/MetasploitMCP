@@ -2,10 +2,14 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Poetry](https://img.shields.io/badge/dependency%20management-poetry-blue.svg)](https://python-poetry.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 A modern, secure Model Context Protocol (MCP) server that provides AI assistants with controlled access to Metasploit Framework functionality.
+
+> **Fork notice:** This project is a fork of [GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP),
+> the original Metasploit MCP server created by GH05TCREW. It is distributed under the same Apache License 2.0.
+> See [Relationship to upstream](#relationship-to-upstream) for what this fork changes and improves.
 
 ## Features
 
@@ -309,6 +313,7 @@ For detailed documentation, see:
 - **[Integration Testing](docs/METASPLOITABLE3_TESTING.md)**: Testing with Metasploitable 3
 - **[Quick Start Testing](docs/QUICK_START_TESTING.md)**: 5-minute testing setup
 - **[Poetry Migration](docs/POETRY_MIGRATION.md)**: Migration from requirements.txt
+- **[Releasing](docs/RELEASING.md)**: How maintainers cut a release
 - **[Changelog](CHANGELOG.md)**: Version history and breaking changes
 - **[Contributing](CONTRIBUTING.md)**: How to contribute to the project
 
@@ -348,12 +353,43 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 5. Run quality checks: `make full-check`
 6. Submit a pull request
 
+## Relationship to upstream
+
+This project is a fork of **[GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP)**,
+the original Metasploit MCP server created by **GH05TCREW** (`harmasic@gmail.com`). Full credit for the
+original design and implementation goes to the upstream author. This fork retains the upstream
+**Apache License 2.0** (see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE)).
+
+**Upstream base (GH05TCREW):** core Metasploit RPC integration, exploit / payload / session / console
+management, and background job handling — originally a single-file server with a `requirements.txt`
+install and SSE transport.
+
+**What this fork changes and improves:**
+
+- **Packaging & layout** — Poetry-based packaging, a `src/metasploit_mcp/` layout, and a
+  `metasploit-mcp` CLI entry point (replacing the single-file `requirements.txt` setup).
+- **Transport** — FastMCP HTTP (streamable) transport, replacing SSE.
+- **Dynamic option detection** — module/payload options are queried live from Metasploit instead of
+  being hardcoded, with detection of confused module/payload options.
+- **Concurrency safety** — per-session locking to prevent concurrent Meterpreter/shell access, plus a
+  per-agent Metasploit instance manager for isolation.
+- **Reliability** — async event-loop monitoring (blocking/backlog detection), MCP keep-alive to
+  prevent client timeouts, an RPC timeout cap with client cleanup and `auth.logout`, session-ID
+  normalization with fallback lookups, and force-option validation against module capabilities.
+- **Quality** — a comprehensive test suite, a Metasploitable 3 integration harness, and dependency
+  security updates.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the detailed version history.
+
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **Apache License 2.0** — see the [`LICENSE`](LICENSE) file for the
+full text and the [`NOTICE`](NOTICE) file for attribution. As a fork, it preserves the license of the
+upstream [GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP) project.
 
 ## Acknowledgments
 
+- **[GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP)**: The original project this fork is based on
 - **Metasploit Framework**: The powerful penetration testing platform
 - **Model Context Protocol**: The standardized AI-tool communication protocol
 - **FastMCP**: Modern MCP server implementation framework

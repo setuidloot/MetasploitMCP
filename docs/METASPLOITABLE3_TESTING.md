@@ -130,7 +130,7 @@ The harness includes test cases for the following Metasploitable 3 vulnerabiliti
 
 4. **Start MetasploitMCP Server:**
    ```bash
-   poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+   poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
    ```
 
 ## Usage
@@ -140,7 +140,7 @@ The harness includes test cases for the following Metasploitable 3 vulnerabiliti
 Run all tests against Metasploitable 3:
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --lport 4444
@@ -151,7 +151,7 @@ poetry run python metasploitable3_test_harness.py \
 See all available exploit tests:
 
 ```bash
-poetry run python metasploitable3_test_harness.py --list-tests
+poetry run python tests/harness.py --list-tests
 ```
 
 Output:
@@ -177,7 +177,7 @@ Available Tests:
 Run a single test by name:
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --test "ProFTPD ModCopy Exec"
@@ -188,7 +188,7 @@ poetry run python metasploitable3_test_harness.py \
 Connect to a different MCP server:
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --mcp-url http://192.168.1.100:9000
@@ -199,7 +199,7 @@ poetry run python metasploitable3_test_harness.py \
 Stop testing after the first failure:
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --stop-on-failure
@@ -210,7 +210,7 @@ poetry run python metasploitable3_test_harness.py \
 Enable debug logging:
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --verbose
@@ -382,7 +382,7 @@ Some exploits may fail if the target has been patched or configured differently.
 Enable verbose logging to diagnose issues:
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --verbose
@@ -499,12 +499,12 @@ jobs:
       
       - name: Start MCP Server
         run: |
-          poetry run python MetasploitMCP.py --transport http --port 8085 &
+          poetry run metasploit-mcp --transport http --port 8085 &
           sleep 5
       
       - name: Run Integration Tests
         run: |
-          poetry run python metasploitable3_test_harness.py \
+          poetry run python tests/harness.py \
             --target ${{ secrets.METASPLOITABLE3_IP }} \
             --lhost ${{ secrets.TEST_LHOST }} \
             --mcp-url http://127.0.0.1:8085

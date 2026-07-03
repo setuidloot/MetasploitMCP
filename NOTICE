@@ -1,0 +1,26 @@
+MetasploitMCP
+Copyright 2025 GH05TCREW and the MetasploitMCP contributors
+
+This product includes software developed as part of the MetasploitMCP project.
+
+------------------------------------------------------------------------------
+Upstream attribution
+------------------------------------------------------------------------------
+
+This project is a fork of MetasploitMCP, originally created by GH05TCREW:
+
+    https://github.com/GH05TCREW/MetasploitMCP
+
+The original implementation (core Metasploit RPC integration, exploit/payload/
+session/console management, and background job handling) was authored by
+GH05TCREW <harmasic@gmail.com> and is licensed under the Apache License, 2.0.
+This fork retains that license and extends the project; see README.md
+("Relationship to upstream") and CHANGELOG.md for a summary of the changes.
+
+------------------------------------------------------------------------------
+Third-party software
+------------------------------------------------------------------------------
+
+This software integrates with, but does not redistribute, the Metasploit
+Framework (https://www.metasploit.com/) via its RPC interface. The Metasploit
+Framework is a separate work distributed under its own license.

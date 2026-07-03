@@ -41,7 +41,7 @@ async def test_connection(mcp_url: str):
     except httpx.ConnectError as e:
         print(f"✗ Cannot connect to server: {e}")
         print(f"\nMake sure MetasploitMCP is running:")
-        print(f"  poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port {mcp_url.split(':')[-1].split('/')[0]}")
+        print(f"  poetry run metasploit-mcp --transport http --host 127.0.0.1 --port {mcp_url.split(':')[-1].split('/')[0]}")
         return False
     except Exception as e:
         print(f"✗ Error: {e}")

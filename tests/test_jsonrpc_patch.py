@@ -1,330 +1,214 @@
 #!/usr/bin/env python3
 """
-Tests for pymetasploit3 JSON-RPC monkeypatch.
+Tests for the pymetasploit3 JSON-RPC monkeypatch (metasploit_mcp.jsonrpc_patch).
 
-Tests cover:
-- Protocol detection from environment variable
-- JSON-RPC encoding/decoding
-- Header setting
-- Integration with MsfRpcClient
-- Backward compatibility (msgpack)
+The patch adds optional JSON-RPC 2.0 support to pymetasploit3 (selected via the
+MSF_RPC_PROTOCOL env var). These tests exercise the current implementation:
+
+- ``_jsonrpc_encode`` wraps ``[method, *params]`` in a JSON-RPC 2.0 envelope.
+- ``_jsonrpc_decode`` unwraps the ``result`` field (or raises on ``error``).
+- ``_patched_encode`` / ``_patched_decode`` dispatch on the module-level
+  ``_USE_JSONRPC`` flag (JSON-RPC vs. msgpack).
+- ``_patched_post_request`` / ``_patched_init`` set protocol-appropriate headers.
+- ``apply_patch(utils_module, msfrpc_module)`` installs the patched callables
+  onto the supplied modules, and is a no-op when JSON-RPC is disabled.
+
+The protocol flag is captured at import time, so instead of reloading the module
+(fragile) we toggle the module-level globals directly within each test.
 """
 
-import pytest
-import os
 import json
-import sys
-from unittest.mock import Mock, patch, MagicMock
-from typing import Any, Dict
+import contextlib
 
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import pytest
+
+from metasploit_mcp import jsonrpc_patch
 
 
-class TestJSONRPCPatch:
-    """Test JSON-RPC monkeypatch functionality."""
-    
-    def setup_method(self):
-        """Set up test fixtures."""
-        # Clear any existing patches
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        # Mock pymetasploit3 modules before importing patch
-        sys.modules['pymetasploit3'] = Mock()
-        sys.modules['pymetasploit3.utils'] = Mock()
-        sys.modules['pymetasploit3.msfrpc'] = Mock()
-        
-        # Create mock encode/decode functions
-        import msgpack
-        self.original_encode = msgpack.packb
-        self.original_decode = lambda data: msgpack.unpackb(data, strict_map_key=False)
-        
-        sys.modules['pymetasploit3.utils'].encode = self.original_encode
-        sys.modules['pymetasploit3.utils'].decode = self.original_decode
-        
-        # Create mock MsfRpcClient class
-        class MockMsfRpcClient:
-            def __init__(self, password, **kwargs):
-                self.password = password
-                self.host = kwargs.get('server', '127.0.0.1')
-                self.port = kwargs.get('port', 55553)
-                self.uri = kwargs.get('uri', '/api/')
-                self.ssl = kwargs.get('ssl', False)
-                self.token = None
-                self.encodings = kwargs.get('encodings', ['utf-8'])
-                self.decode_error_handling = kwargs.get('decode_error_handling', 'strict')
-                self.headers = {"Content-type": "binary/message-pack"}
-            
-            def post_request(self, url, payload):
-                import requests
-                return requests.post(url, data=payload, headers=self.headers, verify=False)
-        
-        sys.modules['pymetasploit3.msfrpc'].MsfRpcClient = MockMsfRpcClient
-    
-    def teardown_method(self):
-        """Clean up after tests."""
-        # Remove patch module from cache
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            patch_module = sys.modules['pymetasploit3_jsonrpc_patch']
-            if hasattr(patch_module, 'remove_patch'):
-                patch_module.remove_patch()
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'jsonrpc'}, clear=False)
+@contextlib.contextmanager
+def _use_jsonrpc(enabled: bool):
+    """Temporarily force the module-level JSON-RPC flag on/off."""
+    prev_use = jsonrpc_patch._USE_JSONRPC
+    prev_proto = jsonrpc_patch._RPC_PROTOCOL
+    jsonrpc_patch._USE_JSONRPC = enabled
+    jsonrpc_patch._RPC_PROTOCOL = 'jsonrpc' if enabled else 'msgpack'
+    try:
+        yield
+    finally:
+        jsonrpc_patch._USE_JSONRPC = prev_use
+        jsonrpc_patch._RPC_PROTOCOL = prev_proto
+
+
+class TestProtocolHelpers:
     def test_protocol_detection_jsonrpc(self):
-        """Test that JSON-RPC protocol is detected from environment variable."""
-        # Reload module to pick up environment variable
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        assert pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled() is True
-        assert pymetasploit3_jsonrpc_patch._get_protocol() == 'jsonrpc'
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'msgpack'}, clear=False)
+        with _use_jsonrpc(True):
+            assert jsonrpc_patch._is_jsonrpc_enabled() is True
+            assert jsonrpc_patch._get_protocol() == 'jsonrpc'
+
     def test_protocol_detection_msgpack(self):
-        """Test that msgpack protocol is detected from environment variable."""
-        # Reload module to pick up environment variable
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        assert pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled() is False
-        assert pymetasploit3_jsonrpc_patch._get_protocol() == 'msgpack'
-    
-    @patch.dict(os.environ, {}, clear=False)
-    def test_protocol_detection_default(self):
-        """Test that msgpack is default when environment variable is not set."""
-        # Reload module to pick up environment variable
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        assert pymetasploit3_jsonrpc_patch._is_jsonrpc_enabled() is False
-        assert pymetasploit3_jsonrpc_patch._get_protocol() == 'msgpack'
-    
-    def test_jsonrpc_encode(self):
-        """Test JSON-RPC encoding function."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Test encoding a simple list (Metasploit RPC format)
-        data = ['auth.login', 'username', 'password']
-        encoded = pymetasploit3_jsonrpc_patch._jsonrpc_encode(data)
-        
+        with _use_jsonrpc(False):
+            assert jsonrpc_patch._is_jsonrpc_enabled() is False
+            assert jsonrpc_patch._get_protocol() == 'msgpack'
+
+
+class TestJSONRPCEncode:
+    def test_encode_wraps_in_jsonrpc_envelope(self):
+        """[method, *params] -> JSON-RPC 2.0 request envelope."""
+        encoded = jsonrpc_patch._jsonrpc_encode(['auth.login', 'username', 'password'])
         assert isinstance(encoded, bytes)
+
         decoded = json.loads(encoded.decode('utf-8'))
-        assert decoded == data
-    
-    def test_jsonrpc_decode(self):
-        """Test JSON-RPC decoding function."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Test decoding JSON response
-        data = {'result': 'success', 'token': 'test-token'}
-        json_bytes = json.dumps(data).encode('utf-8')
-        decoded = pymetasploit3_jsonrpc_patch._jsonrpc_decode(json_bytes)
-        
-        assert decoded == data
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'jsonrpc'}, clear=False)
-    def test_patched_encode_jsonrpc(self):
-        """Test patched encode function with JSON-RPC enabled."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        data = ['method', 'arg1', 'arg2']
-        encoded = pymetasploit3_jsonrpc_patch._patched_encode(data)
-        
-        # Should be JSON-encoded
-        assert isinstance(encoded, bytes)
-        decoded = json.loads(encoded.decode('utf-8'))
-        assert decoded == data
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'msgpack'}, clear=False)
-    def test_patched_encode_msgpack(self):
-        """Test patched encode function with msgpack (should use original)."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        import msgpack
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        data = ['method', 'arg1', 'arg2']
-        encoded = pymetasploit3_jsonrpc_patch._patched_encode(data)
-        
-        # Should be msgpack-encoded
-        assert isinstance(encoded, bytes)
-        # Decode with msgpack to verify
-        decoded = msgpack.unpackb(encoded, strict_map_key=False)
-        assert decoded == data
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'jsonrpc'}, clear=False)
-    def test_patched_init_sets_jsonrpc_headers(self):
-        """Test that patched __init__ sets correct headers for JSON-RPC."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Create a mock client instance
-        mock_client = Mock()
-        mock_client.host = '127.0.0.1'
-        mock_client.port = 55553
-        mock_client.uri = '/api/'
-        mock_client.ssl = False
-        mock_client.token = None
-        mock_client.encodings = ['utf-8']
-        mock_client.decode_error_handling = 'strict'
-        mock_client.headers = {}
-        
-        # Apply patched init
-        pymetasploit3_jsonrpc_patch._patched_init(mock_client, 'password')
-        
-        assert mock_client.headers == {"Content-type": "application/json"}
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'msgpack'}, clear=False)
-    def test_patched_init_sets_msgpack_headers(self):
-        """Test that patched __init__ sets correct headers for msgpack."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Create a mock client instance
-        mock_client = Mock()
-        mock_client.host = '127.0.0.1'
-        mock_client.port = 55553
-        mock_client.uri = '/api/'
-        mock_client.ssl = False
-        mock_client.token = None
-        mock_client.encodings = ['utf-8']
-        mock_client.decode_error_handling = 'strict'
-        mock_client.headers = {}
-        
-        # Apply patched init
-        pymetasploit3_jsonrpc_patch._patched_init(mock_client, 'password')
-        
-        assert mock_client.headers == {"Content-type": "binary/message-pack"}
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'jsonrpc'}, clear=False)
-    def test_patched_post_request_sets_jsonrpc_headers(self):
-        """Test that patched post_request sets correct headers for JSON-RPC."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Create a mock client instance
-        mock_client = Mock()
-        mock_client.headers = {}
-        
-        # Mock requests.post
-        with patch('requests.post') as mock_post:
-            mock_response = Mock()
-            mock_response.content = b'{"result": "success"}'
-            mock_post.return_value = mock_response
-            
-            pymetasploit3_jsonrpc_patch._patched_post_request(
-                mock_client, 'http://127.0.0.1:55553/api/', b'test'
-            )
-            
-            # Check that headers were set correctly
-            assert mock_client.headers == {"Content-type": "application/json"}
-            # Check that requests.post was called with correct headers
-            mock_post.assert_called_once()
-            call_args = mock_post.call_args
-            assert call_args[1]['headers'] == {"Content-type": "application/json"}
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'jsonrpc'}, clear=False)
-    def test_apply_patch(self):
-        """Test that apply_patch successfully patches pymetasploit3 modules."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        # Set up mocks
-        mock_utils = sys.modules['pymetasploit3.utils']
-        mock_msfrpc = sys.modules['pymetasploit3.msfrpc']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Verify patches were applied
-        assert mock_utils.encode == pymetasploit3_jsonrpc_patch._patched_encode
-        assert mock_utils.decode == pymetasploit3_jsonrpc_patch._patched_decode
-        assert mock_msfrpc.MsfRpcClient.__init__ == pymetasploit3_jsonrpc_patch._patched_init
-        assert mock_msfrpc.MsfRpcClient.post_request == pymetasploit3_jsonrpc_patch._patched_post_request
-    
-    @patch.dict(os.environ, {'MSF_RPC_PROTOCOL': 'jsonrpc'}, clear=False)
-    def test_remove_patch(self):
-        """Test that remove_patch restores original functions."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        # Store original functions
-        original_encode = sys.modules['pymetasploit3.utils'].encode
-        original_decode = sys.modules['pymetasploit3.utils'].decode
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Apply patch
-        pymetasploit3_jsonrpc_patch.apply_patch()
-        
-        # Remove patch
-        pymetasploit3_jsonrpc_patch.remove_patch()
-        
-        # Verify originals were restored
-        assert sys.modules['pymetasploit3.utils'].encode == original_encode
-        assert sys.modules['pymetasploit3.utils'].decode == original_decode
-    
-    def test_jsonrpc_encode_handles_complex_data(self):
-        """Test JSON-RPC encoding with complex nested data structures."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Test with nested structures (common in Metasploit RPC)
+        assert decoded['jsonrpc'] == '2.0'
+        assert decoded['method'] == 'auth.login'
+        assert decoded['params'] == ['username', 'password']
+        assert isinstance(decoded['id'], int)
+
+    def test_encode_handles_complex_nested_data(self):
         data = [
             'module.execute',
             'token123',
-            {
-                'RHOSTS': '192.168.1.1',
-                'RPORT': 445,
-                'options': {
-                    'SMBUser': 'admin',
-                    'SMBPass': 'password'
-                }
-            }
+            {'RHOSTS': '192.168.1.1', 'RPORT': 445,
+             'options': {'SMBUser': 'admin', 'SMBPass': 'password'}},
         ]
-        
-        encoded = pymetasploit3_jsonrpc_patch._jsonrpc_encode(data)
+        decoded = json.loads(jsonrpc_patch._jsonrpc_encode(data).decode('utf-8'))
+        assert decoded['method'] == 'module.execute'
+        assert decoded['params'][0] == 'token123'
+        assert decoded['params'][1]['options']['SMBUser'] == 'admin'
+
+    def test_encode_method_only(self):
+        decoded = json.loads(jsonrpc_patch._jsonrpc_encode(['core.version']).decode('utf-8'))
+        assert decoded['method'] == 'core.version'
+        assert decoded['params'] == []
+
+    def test_encode_rejects_non_list(self):
+        with pytest.raises(ValueError):
+            jsonrpc_patch._jsonrpc_encode('not-a-list')
+
+    def test_encode_assigns_incrementing_ids(self):
+        first = json.loads(jsonrpc_patch._jsonrpc_encode(['a']).decode('utf-8'))
+        second = json.loads(jsonrpc_patch._jsonrpc_encode(['b']).decode('utf-8'))
+        assert second['id'] == first['id'] + 1
+
+
+class TestJSONRPCDecode:
+    def test_decode_extracts_result_field(self):
+        payload = json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {'token': 'abc'}}).encode()
+        assert jsonrpc_patch._jsonrpc_decode(payload) == {'token': 'abc'}
+
+    def test_decode_raises_on_error_field(self):
+        payload = json.dumps({
+            'jsonrpc': '2.0', 'id': 1,
+            'error': {'code': 500, 'message': 'boom'},
+        }).encode()
+        with pytest.raises(ValueError, match='500'):
+            jsonrpc_patch._jsonrpc_decode(payload)
+
+    def test_decode_returns_response_without_result_or_error(self):
+        payload = json.dumps({'jsonrpc': '2.0', 'id': 1}).encode()
+        assert jsonrpc_patch._jsonrpc_decode(payload) == {'jsonrpc': '2.0', 'id': 1}
+
+    def test_decode_raises_on_invalid_json(self):
+        with pytest.raises((ValueError, json.JSONDecodeError)):
+            jsonrpc_patch._jsonrpc_decode(b'not valid json {')
+
+
+class TestPatchedEncodeDecode:
+    def test_patched_encode_jsonrpc(self):
+        with _use_jsonrpc(True):
+            encoded = jsonrpc_patch._patched_encode(['method', 'arg1', 'arg2'])
         decoded = json.loads(encoded.decode('utf-8'))
-        
-        assert decoded == data
-        assert decoded[2]['options']['SMBUser'] == 'admin'
-    
-    def test_jsonrpc_decode_handles_errors(self):
-        """Test JSON-RPC decoding error handling."""
-        if 'pymetasploit3_jsonrpc_patch' in sys.modules:
-            del sys.modules['pymetasploit3_jsonrpc_patch']
-        
-        from metasploit_mcp import jsonrpc_patch as pymetasploit3_jsonrpc_patch
-        
-        # Test with invalid JSON
-        invalid_json = b'not valid json {'
-        
-        with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
-            pymetasploit3_jsonrpc_patch._jsonrpc_decode(invalid_json)
+        assert decoded['method'] == 'method'
+        assert decoded['params'] == ['arg1', 'arg2']
+
+    def test_patched_encode_msgpack(self):
+        import msgpack
+        with _use_jsonrpc(False):
+            encoded = jsonrpc_patch._patched_encode(['method', 'arg1', 'arg2'])
+        assert isinstance(encoded, bytes)
+        assert msgpack.unpackb(encoded, strict_map_key=False) == ['method', 'arg1', 'arg2']
+
+    def test_patched_decode_roundtrips_msgpack(self):
+        import msgpack
+        with _use_jsonrpc(False):
+            assert jsonrpc_patch._patched_decode(msgpack.packb({'a': 1})) == {'a': 1}
+
+    def test_patched_decode_jsonrpc_result(self):
+        with _use_jsonrpc(True):
+            payload = json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': 'ok'}).encode()
+            assert jsonrpc_patch._patched_decode(payload) == 'ok'
 
 
+class TestPatchedHTTP:
+    def test_patched_init_sets_jsonrpc_headers(self):
+        class _Client:
+            pass
+
+        client = _Client()
+        with _use_jsonrpc(True):
+            jsonrpc_patch._patched_init(client, 'password')
+        assert client.headers == {"Content-type": "application/json"}
+        assert client.uri == '/api/v1/json-rpc'
+
+    def test_patched_post_request_sets_jsonrpc_headers(self, mocker):
+        class _Client:
+            pass
+
+        client = _Client()
+        mock_post = mocker.patch('requests.post')
+        with _use_jsonrpc(True):
+            jsonrpc_patch._patched_post_request(client, 'http://127.0.0.1:55553/api/', b'test')
+        assert client.headers == {"Content-type": "application/json"}
+        assert mock_post.call_args.kwargs['headers'] == {"Content-type": "application/json"}
+
+    def test_patched_post_request_sets_msgpack_headers(self, mocker):
+        class _Client:
+            pass
+
+        client = _Client()
+        mock_post = mocker.patch('requests.post')
+        with _use_jsonrpc(False):
+            jsonrpc_patch._patched_post_request(client, 'http://127.0.0.1:55553/api/', b'test')
+        assert client.headers == {"Content-type": "binary/message-pack"}
 
 
+class TestApplyPatch:
+    def _fake_modules(self):
+        import types
 
+        utils = types.ModuleType('pymetasploit3.utils')
+        utils.encode = lambda data: b'orig-encode'
+        utils.decode = lambda data: 'orig-decode'
+
+        msfrpc = types.ModuleType('pymetasploit3.msfrpc')
+
+        class MsfRpcClient:
+            def __init__(self, password, **kwargs):
+                self.password = password
+
+            def post_request(self, url, payload):  # pragma: no cover - replaced by patch
+                return None
+
+            def call(self, method, opts=None, is_raw=False):  # pragma: no cover
+                return None
+
+        msfrpc.MsfRpcClient = MsfRpcClient
+        return utils, msfrpc
+
+    def test_apply_patch_installs_patched_callables(self):
+        utils, msfrpc = self._fake_modules()
+        with _use_jsonrpc(True):
+            jsonrpc_patch.apply_patch(utils, msfrpc)
+
+        assert msfrpc.encode is jsonrpc_patch._patched_encode
+        assert msfrpc.decode is jsonrpc_patch._patched_decode
+        assert msfrpc.MsfRpcClient.__init__ is jsonrpc_patch._patched_init
+        assert msfrpc.MsfRpcClient.post_request is jsonrpc_patch._patched_post_request
+        assert msfrpc.MsfRpcClient.call is jsonrpc_patch._patched_call
+
+    def test_apply_patch_is_noop_when_jsonrpc_disabled(self):
+        utils, msfrpc = self._fake_modules()
+        original_init = msfrpc.MsfRpcClient.__init__
+        with _use_jsonrpc(False):
+            jsonrpc_patch.apply_patch(utils, msfrpc)
+        assert msfrpc.MsfRpcClient.__init__ is original_init
+        assert not hasattr(msfrpc, 'encode')
