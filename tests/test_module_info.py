@@ -330,8 +330,7 @@ class TestGetModuleDocumentation:
 
             # Create sample documentation files
             proftpd_doc = docs_path / "exploit" / "unix" / "ftp" / "proftpd_modcopy_exec.md"
-            proftpd_doc.write_text(
-                """# ProFTPD mod_copy Command Execution
+            proftpd_doc.write_text("""# ProFTPD mod_copy Command Execution
 
 ## Description
 
@@ -358,8 +357,7 @@ msf6 exploit(unix/ftp/proftpd_modcopy_exec) > set RHOSTS 192.168.1.10
 msf6 exploit(unix/ftp/proftpd_modcopy_exec) > set SITEPATH /var/www/html
 msf6 exploit(unix/ftp/proftpd_modcopy_exec) > run
 ```
-"""
-            )
+""")
 
             eternalblue_doc = docs_path / "exploit" / "windows" / "smb" / "ms17_010_eternalblue.md"
             eternalblue_doc.write_text(
@@ -377,12 +375,10 @@ This module exploits the MS17-010 vulnerability in SMBv1.
             )
 
             http_version_doc = docs_path / "auxiliary" / "scanner" / "http" / "http_version.md"
-            http_version_doc.write_text(
-                """# HTTP Version Scanner
+            http_version_doc.write_text("""# HTTP Version Scanner
 
 Displays version information about target HTTP servers.
-"""
-            )
+""")
 
             yield docs_path
 
@@ -567,14 +563,12 @@ class TestIntegration:
             (docs_path / "exploit" / "unix" / "ftp").mkdir(parents=True)
 
             proftpd_doc = docs_path / "exploit" / "unix" / "ftp" / "proftpd_modcopy_exec.md"
-            proftpd_doc.write_text(
-                """# ProFTPD mod_copy
+            proftpd_doc.write_text("""# ProFTPD mod_copy
 
 ## Scenarios
 
 Use with RHOSTS, RPORT, RPORT_FTP, SITEPATH, TMPPATH, and TARGETURI options.
-"""
-            )
+""")
 
             yield docs_path
 
