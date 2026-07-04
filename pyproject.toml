@@ -37,7 +37,7 @@ fastapi = ">=0.95.0"
 uvicorn = {extras = ["standard"], version = ">=0.22.0"}
 pymetasploit3 = ">=1.0.6"
 mcp = ">=1.6.0"
-fastmcp = ">=2.10.3"
+fastmcp = ">=2.10.3,<3.4.0"
 psutil = "^7.1.3"
 
 [tool.poetry.group.dev.dependencies]
