@@ -1,0 +1,2086 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:b914c798-0fb0-3c53-8d1a-6db56298d625",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:pypi/metasploit-mcp@3.0.0",
+      "name": "metasploit-mcp",
+      "version": "3.0.0",
+      "description": "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol",
+      "purl": "pkg:pypi/metasploit-mcp@3.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    "tools": [
+      {
+        "name": "generate_sbom.py",
+        "vendor": "MetasploitMCP"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/aiofile@3.9.0",
+      "name": "aiofile",
+      "version": "3.9.0",
+      "purl": "pkg:pypi/aiofile@3.9.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Asynchronous file operations."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/annotated-doc@0.0.4",
+      "name": "annotated-doc",
+      "version": "0.0.4",
+      "purl": "pkg:pypi/annotated-doc@0.0.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Document parameters, class attributes, return types, and variables inline, with Annotated."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/annotated-types@0.7.0",
+      "name": "annotated-types",
+      "version": "0.7.0",
+      "purl": "pkg:pypi/annotated-types@0.7.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Reusable constraint types to use with typing.Annotated"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/anyio@4.11.0",
+      "name": "anyio",
+      "version": "4.11.0",
+      "purl": "pkg:pypi/anyio@4.11.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "High-level concurrency and networking framework on top of asyncio or Trio"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/attrs@25.3.0",
+      "name": "attrs",
+      "version": "25.3.0",
+      "purl": "pkg:pypi/attrs@25.3.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Classes Without Boilerplate"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/authlib@1.7.2",
+      "name": "authlib",
+      "version": "1.7.2",
+      "purl": "pkg:pypi/authlib@1.7.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "The ultimate Python library in building OAuth and OpenID Connect servers and clients."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/backports-asyncio-runner@1.2.0",
+      "name": "backports-asyncio-runner",
+      "version": "1.2.0",
+      "purl": "pkg:pypi/backports-asyncio-runner@1.2.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Backport of asyncio.Runner, a context manager that controls event loop life cycle."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/backports-tarfile@1.2.0",
+      "name": "backports-tarfile",
+      "version": "1.2.0",
+      "purl": "pkg:pypi/backports-tarfile@1.2.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Backport of CPython tarfile module"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/beartype@0.22.9",
+      "name": "beartype",
+      "version": "0.22.9",
+      "purl": "pkg:pypi/beartype@0.22.9",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Unbearably fast near-real-time pure-Python runtime-static type-checker."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/black@26.5.1",
+      "name": "black",
+      "version": "26.5.1",
+      "purl": "pkg:pypi/black@26.5.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "The uncompromising code formatter."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/cachetools@7.0.6",
+      "name": "cachetools",
+      "version": "7.0.6",
+      "purl": "pkg:pypi/cachetools@7.0.6",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Extensible memoizing collections and decorators"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/caio@0.9.25",
+      "name": "caio",
+      "version": "0.9.25",
+      "purl": "pkg:pypi/caio@0.9.25",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Asynchronous file IO for Linux MacOS or Windows."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/certifi@2026.4.22",
+      "name": "certifi",
+      "version": "2026.4.22",
+      "purl": "pkg:pypi/certifi@2026.4.22",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Python package for providing Mozilla's CA Bundle."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/cffi@2.0.0",
+      "name": "cffi",
+      "version": "2.0.0",
+      "purl": "pkg:pypi/cffi@2.0.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Foreign Function Interface for Python calling C code."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/cfgv@3.4.0",
+      "name": "cfgv",
+      "version": "3.4.0",
+      "purl": "pkg:pypi/cfgv@3.4.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Validate configuration and produce human readable error messages."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/charset-normalizer@3.4.3",
+      "name": "charset-normalizer",
+      "version": "3.4.3",
+      "purl": "pkg:pypi/charset-normalizer@3.4.3",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/click@8.3.0",
+      "name": "click",
+      "version": "8.3.0",
+      "purl": "pkg:pypi/click@8.3.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Composable command line interface toolkit"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/colorama@0.4.6",
+      "name": "colorama",
+      "version": "0.4.6",
+      "purl": "pkg:pypi/colorama@0.4.6",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Cross-platform colored terminal text."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/coverage@7.10.7",
+      "name": "coverage",
+      "version": "7.10.7",
+      "purl": "pkg:pypi/coverage@7.10.7",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Code coverage measurement for Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/cryptography@49.0.0",
+      "name": "cryptography",
+      "version": "49.0.0",
+      "purl": "pkg:pypi/cryptography@49.0.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "cryptography is a package which provides cryptographic recipes and primitives to Python developers."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/cyclopts@4.11.0",
+      "name": "cyclopts",
+      "version": "4.11.0",
+      "purl": "pkg:pypi/cyclopts@4.11.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Intuitive, easy CLIs based on type hints."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/decorator@5.2.1",
+      "name": "decorator",
+      "version": "5.2.1",
+      "purl": "pkg:pypi/decorator@5.2.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Decorators for Humans"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/distlib@0.4.0",
+      "name": "distlib",
+      "version": "0.4.0",
+      "purl": "pkg:pypi/distlib@0.4.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Distribution utilities"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/distro@1.9.0",
+      "name": "distro",
+      "version": "1.9.0",
+      "purl": "pkg:pypi/distro@1.9.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Distro - an OS platform information API"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/dnspython@2.8.0",
+      "name": "dnspython",
+      "version": "2.8.0",
+      "purl": "pkg:pypi/dnspython@2.8.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "DNS toolkit"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/docstring-parser@0.17.0",
+      "name": "docstring-parser",
+      "version": "0.17.0",
+      "purl": "pkg:pypi/docstring-parser@0.17.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Parse Python docstrings in reST, Google and Numpydoc format"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/docutils@0.22.2",
+      "name": "docutils",
+      "version": "0.22.2",
+      "purl": "pkg:pypi/docutils@0.22.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Docutils -- Python Documentation Utilities"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/email-validator@2.3.0",
+      "name": "email-validator",
+      "version": "2.3.0",
+      "purl": "pkg:pypi/email-validator@2.3.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "A robust email address syntax and deliverability validation library."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/exceptiongroup@1.3.0",
+      "name": "exceptiongroup",
+      "version": "1.3.0",
+      "purl": "pkg:pypi/exceptiongroup@1.3.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Backport of PEP 654 (exception groups)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/fastapi@0.136.1",
+      "name": "fastapi",
+      "version": "0.136.1",
+      "purl": "pkg:pypi/fastapi@0.136.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/fastmcp@3.2.4",
+      "name": "fastmcp",
+      "version": "3.2.4",
+      "purl": "pkg:pypi/fastmcp@3.2.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "The fast, Pythonic way to build MCP servers and clients."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/filelock@3.29.5",
+      "name": "filelock",
+      "version": "3.29.5",
+      "purl": "pkg:pypi/filelock@3.29.5",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "A platform independent file lock."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/flake8@7.3.0",
+      "name": "flake8",
+      "version": "7.3.0",
+      "purl": "pkg:pypi/flake8@7.3.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "the modular source code checker: pep8 pyflakes and co"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/griffelib@2.0.2",
+      "name": "griffelib",
+      "version": "2.0.2",
+      "purl": "pkg:pypi/griffelib@2.0.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Signatures for entire Python programs. Extract the structure, the frame, the skeleton of your project, to generate API documentation or find breaking changes in your API."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/h11@0.16.0",
+      "name": "h11",
+      "version": "0.16.0",
+      "purl": "pkg:pypi/h11@0.16.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/httpcore@1.0.9",
+      "name": "httpcore",
+      "version": "1.0.9",
+      "purl": "pkg:pypi/httpcore@1.0.9",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "A minimal low-level HTTP client."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/httptools@0.6.4",
+      "name": "httptools",
+      "version": "0.6.4",
+      "purl": "pkg:pypi/httptools@0.6.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "A collection of framework independent HTTP protocol utils."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/httpx@0.28.1",
+      "name": "httpx",
+      "version": "0.28.1",
+      "purl": "pkg:pypi/httpx@0.28.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "The next generation HTTP client."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/httpx-sse@0.4.1",
+      "name": "httpx-sse",
+      "version": "0.4.1",
+      "purl": "pkg:pypi/httpx-sse@0.4.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Consume Server-Sent Event (SSE) messages with HTTPX."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/identify@2.6.14",
+      "name": "identify",
+      "version": "2.6.14",
+      "purl": "pkg:pypi/identify@2.6.14",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "File identification library for Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/idna@3.18",
+      "name": "idna",
+      "version": "3.18",
+      "purl": "pkg:pypi/idna@3.18",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Internationalized Domain Names in Applications (IDNA)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/importlib-metadata@8.7.1",
+      "name": "importlib-metadata",
+      "version": "8.7.1",
+      "purl": "pkg:pypi/importlib-metadata@8.7.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Read metadata from Python packages"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/iniconfig@2.1.0",
+      "name": "iniconfig",
+      "version": "2.1.0",
+      "purl": "pkg:pypi/iniconfig@2.1.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "brain-dead simple config-ini parsing"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jaraco-classes@3.4.0",
+      "name": "jaraco-classes",
+      "version": "3.4.0",
+      "purl": "pkg:pypi/jaraco-classes@3.4.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Utility functions for Python class constructs"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jaraco-context@6.1.2",
+      "name": "jaraco-context",
+      "version": "6.1.2",
+      "purl": "pkg:pypi/jaraco-context@6.1.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Useful decorators and context managers"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jaraco-functools@4.4.0",
+      "name": "jaraco-functools",
+      "version": "4.4.0",
+      "purl": "pkg:pypi/jaraco-functools@4.4.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Functools like those found in stdlib"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jeepney@0.9.0",
+      "name": "jeepney",
+      "version": "0.9.0",
+      "purl": "pkg:pypi/jeepney@0.9.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Low-level, pure Python DBus protocol wrapper."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/joserfc@1.7.2",
+      "name": "joserfc",
+      "version": "1.7.2",
+      "purl": "pkg:pypi/joserfc@1.7.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "The ultimate Python library for JOSE RFCs, including JWS, JWE, JWK, JWA, JWT"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jsonpatch@1.33",
+      "name": "jsonpatch",
+      "version": "1.33",
+      "purl": "pkg:pypi/jsonpatch@1.33",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Apply JSON-Patches (RFC 6902)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jsonpointer@3.0.0",
+      "name": "jsonpointer",
+      "version": "3.0.0",
+      "purl": "pkg:pypi/jsonpointer@3.0.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Identify specific nodes in a JSON document (RFC 6901)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jsonref@1.1.0",
+      "name": "jsonref",
+      "version": "1.1.0",
+      "purl": "pkg:pypi/jsonref@1.1.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "jsonref is a library for automatic dereferencing of JSON Reference objects for Python."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jsonschema@4.25.1",
+      "name": "jsonschema",
+      "version": "4.25.1",
+      "purl": "pkg:pypi/jsonschema@4.25.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "An implementation of JSON Schema validation for Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jsonschema-path@0.3.4",
+      "name": "jsonschema-path",
+      "version": "0.3.4",
+      "purl": "pkg:pypi/jsonschema-path@0.3.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "JSONSchema Spec with object-oriented paths"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jsonschema-specifications@2025.9.1",
+      "name": "jsonschema-specifications",
+      "version": "2025.9.1",
+      "purl": "pkg:pypi/jsonschema-specifications@2025.9.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "The JSON Schema meta-schemas and vocabularies, exposed as a Registry"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/keyring@25.7.0",
+      "name": "keyring",
+      "version": "25.7.0",
+      "purl": "pkg:pypi/keyring@25.7.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Store and access your passwords safely."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/langchain-core@1.4.8",
+      "name": "langchain-core",
+      "version": "1.4.8",
+      "purl": "pkg:pypi/langchain-core@1.4.8",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Building applications with LLMs through composability"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/langchain-mcp-adapters@0.1.13",
+      "name": "langchain-mcp-adapters",
+      "version": "0.1.13",
+      "purl": "pkg:pypi/langchain-mcp-adapters@0.1.13",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Make Anthropic Model Context Protocol (MCP) tools compatible with LangChain and LangGraph agents."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/langchain-protocol@0.0.18",
+      "name": "langchain-protocol",
+      "version": "0.0.18",
+      "purl": "pkg:pypi/langchain-protocol@0.0.18",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Python bindings for the LangChain agent streaming protocol"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/langsmith@0.9.7",
+      "name": "langsmith",
+      "version": "0.9.7",
+      "purl": "pkg:pypi/langsmith@0.9.7",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Client library to connect to the LangSmith Observability and Evaluation Platform."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/markdown-it-py@4.0.0",
+      "name": "markdown-it-py",
+      "version": "4.0.0",
+      "purl": "pkg:pypi/markdown-it-py@4.0.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Python port of markdown-it. Markdown parsing, done right!"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/mccabe@0.7.0",
+      "name": "mccabe",
+      "version": "0.7.0",
+      "purl": "pkg:pypi/mccabe@0.7.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "McCabe checker, plugin for flake8"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/mcp@1.27.0",
+      "name": "mcp",
+      "version": "1.27.0",
+      "purl": "pkg:pypi/mcp@1.27.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Model Context Protocol SDK"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/mdurl@0.1.2",
+      "name": "mdurl",
+      "version": "0.1.2",
+      "purl": "pkg:pypi/mdurl@0.1.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Markdown URL utilities"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/mock@5.2.0",
+      "name": "mock",
+      "version": "5.2.0",
+      "purl": "pkg:pypi/mock@5.2.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Rolling backport of unittest.mock for all Pythons"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/more-itertools@10.8.0",
+      "name": "more-itertools",
+      "version": "10.8.0",
+      "purl": "pkg:pypi/more-itertools@10.8.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "More routines for operating on iterables, beyond itertools"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/msgpack@1.2.1",
+      "name": "msgpack",
+      "version": "1.2.1",
+      "purl": "pkg:pypi/msgpack@1.2.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "MessagePack serializer"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/mypy@1.18.2",
+      "name": "mypy",
+      "version": "1.18.2",
+      "purl": "pkg:pypi/mypy@1.18.2",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Optional static typing for Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/mypy-extensions@1.1.0",
+      "name": "mypy-extensions",
+      "version": "1.1.0",
+      "purl": "pkg:pypi/mypy-extensions@1.1.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Type system extensions for programs checked with the mypy type checker."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/nodeenv@1.9.1",
+      "name": "nodeenv",
+      "version": "1.9.1",
+      "purl": "pkg:pypi/nodeenv@1.9.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Node.js virtual environment builder"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/openapi-pydantic@0.5.1",
+      "name": "openapi-pydantic",
+      "version": "0.5.1",
+      "purl": "pkg:pypi/openapi-pydantic@0.5.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Pydantic OpenAPI schema implementation"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/opentelemetry-api@1.41.1",
+      "name": "opentelemetry-api",
+      "version": "1.41.1",
+      "purl": "pkg:pypi/opentelemetry-api@1.41.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "OpenTelemetry Python API"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/orjson@3.11.9",
+      "name": "orjson",
+      "version": "3.11.9",
+      "purl": "pkg:pypi/orjson@3.11.9",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Fast, correct Python JSON library supporting dataclasses, datetimes, and numpy"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/packaging@25.0",
+      "name": "packaging",
+      "version": "25.0",
+      "purl": "pkg:pypi/packaging@25.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Core utilities for Python packages"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pathable@0.4.4",
+      "name": "pathable",
+      "version": "0.4.4",
+      "purl": "pkg:pypi/pathable@0.4.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Object-oriented paths"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pathspec@1.1.1",
+      "name": "pathspec",
+      "version": "1.1.1",
+      "purl": "pkg:pypi/pathspec@1.1.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Utility library for gitignore style pattern matching of file paths."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/platformdirs@4.4.0",
+      "name": "platformdirs",
+      "version": "4.4.0",
+      "purl": "pkg:pypi/platformdirs@4.4.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pluggy@1.6.0",
+      "name": "pluggy",
+      "version": "1.6.0",
+      "purl": "pkg:pypi/pluggy@1.6.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "plugin and hook calling mechanisms for python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pre-commit@4.3.0",
+      "name": "pre-commit",
+      "version": "4.3.0",
+      "purl": "pkg:pypi/pre-commit@4.3.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "A framework for managing and maintaining multi-language pre-commit hooks."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/psutil@7.1.3",
+      "name": "psutil",
+      "version": "7.1.3",
+      "purl": "pkg:pypi/psutil@7.1.3",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Cross-platform lib for process and system monitoring."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/py@1.11.0",
+      "name": "py",
+      "version": "1.11.0",
+      "purl": "pkg:pypi/py@1.11.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "library with cross-python path, ini-parsing, io, code, log facilities"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/py-key-value-aio@0.4.4",
+      "name": "py-key-value-aio",
+      "version": "0.4.4",
+      "purl": "pkg:pypi/py-key-value-aio@0.4.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Async Key-Value Store - A pluggable interface for KV Stores"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pycodestyle@2.14.0",
+      "name": "pycodestyle",
+      "version": "2.14.0",
+      "purl": "pkg:pypi/pycodestyle@2.14.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Python style guide checker"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pycparser@2.23",
+      "name": "pycparser",
+      "version": "2.23",
+      "purl": "pkg:pypi/pycparser@2.23",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "C parser in Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pydantic@2.11.9",
+      "name": "pydantic",
+      "version": "2.11.9",
+      "purl": "pkg:pypi/pydantic@2.11.9",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Data validation using Python type hints"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pydantic-core@2.33.2",
+      "name": "pydantic-core",
+      "version": "2.33.2",
+      "purl": "pkg:pypi/pydantic-core@2.33.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Core functionality for Pydantic validation and serialization"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pydantic-settings@2.11.0",
+      "name": "pydantic-settings",
+      "version": "2.11.0",
+      "purl": "pkg:pypi/pydantic-settings@2.11.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Settings management using Pydantic"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyflakes@3.4.0",
+      "name": "pyflakes",
+      "version": "3.4.0",
+      "purl": "pkg:pypi/pyflakes@3.4.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "passive checker of Python programs"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pygments@2.20.0",
+      "name": "pygments",
+      "version": "2.20.0",
+      "purl": "pkg:pypi/pygments@2.20.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Pygments is a syntax highlighting package written in Python."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyjwt@2.13.0",
+      "name": "pyjwt",
+      "version": "2.13.0",
+      "purl": "pkg:pypi/pyjwt@2.13.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "JSON Web Token implementation in Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pymetasploit3@1.0.6",
+      "name": "pymetasploit3",
+      "version": "1.0.6",
+      "purl": "pkg:pypi/pymetasploit3@1.0.6",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "A full-fledged msfrpc library for Metasploit framework."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyperclip@1.11.0",
+      "name": "pyperclip",
+      "version": "1.11.0",
+      "purl": "pkg:pypi/pyperclip@1.11.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "A cross-platform clipboard module for Python. (Only handles plain text for now.)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest@9.1.1",
+      "name": "pytest",
+      "version": "9.1.1",
+      "purl": "pkg:pypi/pytest@9.1.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "pytest: simple powerful testing with Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest-asyncio@1.4.0",
+      "name": "pytest-asyncio",
+      "version": "1.4.0",
+      "purl": "pkg:pypi/pytest-asyncio@1.4.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Pytest support for asyncio"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest-cov@7.0.0",
+      "name": "pytest-cov",
+      "version": "7.0.0",
+      "purl": "pkg:pypi/pytest-cov@7.0.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Pytest plugin for measuring coverage."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest-mock@3.15.1",
+      "name": "pytest-mock",
+      "version": "3.15.1",
+      "purl": "pkg:pypi/pytest-mock@3.15.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Thin-wrapper around the mock package for easier use with pytest"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/python-discovery@1.4.3",
+      "name": "python-discovery",
+      "version": "1.4.3",
+      "purl": "pkg:pypi/python-discovery@1.4.3",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Python interpreter discovery"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/python-dotenv@1.2.2",
+      "name": "python-dotenv",
+      "version": "1.2.2",
+      "purl": "pkg:pypi/python-dotenv@1.2.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Read key-value pairs from a .env file and set them as environment variables"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/python-multipart@0.0.32",
+      "name": "python-multipart",
+      "version": "0.0.32",
+      "purl": "pkg:pypi/python-multipart@0.0.32",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "A streaming multipart parser for Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytokens@0.4.1",
+      "name": "pytokens",
+      "version": "0.4.1",
+      "purl": "pkg:pypi/pytokens@0.4.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "A Fast, spec compliant Python 3.14+ tokenizer that runs on older Pythons."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pywin32@311",
+      "name": "pywin32",
+      "version": "311",
+      "purl": "pkg:pypi/pywin32@311",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Python for Window Extensions"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pywin32-ctypes@0.2.3",
+      "name": "pywin32-ctypes",
+      "version": "0.2.3",
+      "purl": "pkg:pypi/pywin32-ctypes@0.2.3",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "A (partial) reimplementation of pywin32 using ctypes/cffi"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyyaml@6.0.3",
+      "name": "pyyaml",
+      "version": "6.0.3",
+      "purl": "pkg:pypi/pyyaml@6.0.3",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "YAML parser and emitter for Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/referencing@0.36.2",
+      "name": "referencing",
+      "version": "0.36.2",
+      "purl": "pkg:pypi/referencing@0.36.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "JSON Referencing + Python"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/requests@2.34.2",
+      "name": "requests",
+      "version": "2.34.2",
+      "purl": "pkg:pypi/requests@2.34.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Python HTTP for Humans."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/requests-toolbelt@1.0.0",
+      "name": "requests-toolbelt",
+      "version": "1.0.0",
+      "purl": "pkg:pypi/requests-toolbelt@1.0.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "A utility belt for advanced users of python-requests"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/retry@0.9.2",
+      "name": "retry",
+      "version": "0.9.2",
+      "purl": "pkg:pypi/retry@0.9.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Easy to use retry decorator."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/rich@14.1.0",
+      "name": "rich",
+      "version": "14.1.0",
+      "purl": "pkg:pypi/rich@14.1.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/rich-rst@1.3.1",
+      "name": "rich-rst",
+      "version": "1.3.1",
+      "purl": "pkg:pypi/rich-rst@1.3.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "A beautiful reStructuredText renderer for rich"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/rpds-py@0.27.1",
+      "name": "rpds-py",
+      "version": "0.27.1",
+      "purl": "pkg:pypi/rpds-py@0.27.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Python bindings to Rust's persistent data structures (rpds)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/secretstorage@3.5.0",
+      "name": "secretstorage",
+      "version": "3.5.0",
+      "purl": "pkg:pypi/secretstorage@3.5.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Python bindings to FreeDesktop.org Secret Service API"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/sniffio@1.3.1",
+      "name": "sniffio",
+      "version": "1.3.1",
+      "purl": "pkg:pypi/sniffio@1.3.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Sniff out which async library your code is running under"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/sse-starlette@3.0.2",
+      "name": "sse-starlette",
+      "version": "3.0.2",
+      "purl": "pkg:pypi/sse-starlette@3.0.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "SSE plugin for Starlette"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/starlette@1.3.1",
+      "name": "starlette",
+      "version": "1.3.1",
+      "purl": "pkg:pypi/starlette@1.3.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "The little ASGI library that shines."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/tenacity@9.1.2",
+      "name": "tenacity",
+      "version": "9.1.2",
+      "purl": "pkg:pypi/tenacity@9.1.2",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Retry code until it succeeds"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/tomli@2.2.1",
+      "name": "tomli",
+      "version": "2.2.1",
+      "purl": "pkg:pypi/tomli@2.2.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "A lil' TOML parser"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/typing-extensions@4.15.0",
+      "name": "typing-extensions",
+      "version": "4.15.0",
+      "purl": "pkg:pypi/typing-extensions@4.15.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Backported and Experimental Type Hints for Python 3.9+"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/typing-inspection@0.4.2",
+      "name": "typing-inspection",
+      "version": "0.4.2",
+      "purl": "pkg:pypi/typing-inspection@0.4.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Runtime typing introspection tools"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/uncalled-for@0.3.1",
+      "name": "uncalled-for",
+      "version": "0.3.1",
+      "purl": "pkg:pypi/uncalled-for@0.3.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Async dependency injection for Python functions"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/urllib3@2.7.0",
+      "name": "urllib3",
+      "version": "2.7.0",
+      "purl": "pkg:pypi/urllib3@2.7.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "HTTP library with thread-safe connection pooling, file post, and more."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/uuid-utils@0.16.2",
+      "name": "uuid-utils",
+      "version": "0.16.2",
+      "purl": "pkg:pypi/uuid-utils@0.16.2",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Fast, drop-in replacement for Python's uuid module, powered by Rust."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/uvicorn@0.46.0",
+      "name": "uvicorn",
+      "version": "0.46.0",
+      "purl": "pkg:pypi/uvicorn@0.46.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "The lightning-fast ASGI server."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/uvloop@0.21.0",
+      "name": "uvloop",
+      "version": "0.21.0",
+      "purl": "pkg:pypi/uvloop@0.21.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Fast implementation of asyncio event loop on top of libuv"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/virtualenv@21.5.1",
+      "name": "virtualenv",
+      "version": "21.5.1",
+      "purl": "pkg:pypi/virtualenv@21.5.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Virtual Python Environment builder"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/watchfiles@1.1.0",
+      "name": "watchfiles",
+      "version": "1.1.0",
+      "purl": "pkg:pypi/watchfiles@1.1.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Simple, modern and high performance file watching and code reload in python."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/websockets@15.0.1",
+      "name": "websockets",
+      "version": "15.0.1",
+      "purl": "pkg:pypi/websockets@15.0.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "An implementation of the WebSocket Protocol (RFC 6455 & 7692)"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/xxhash@3.8.0",
+      "name": "xxhash",
+      "version": "3.8.0",
+      "purl": "pkg:pypi/xxhash@3.8.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Python binding for xxHash"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/zipp@3.23.1",
+      "name": "zipp",
+      "version": "3.23.1",
+      "purl": "pkg:pypi/zipp@3.23.1",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main"
+        }
+      ],
+      "description": "Backport of pathlib-compatible object wrapper for zip files"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/zstandard@0.25.0",
+      "name": "zstandard",
+      "version": "0.25.0",
+      "purl": "pkg:pypi/zstandard@0.25.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "dev"
+        }
+      ],
+      "description": "Zstandard bindings for Python"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:pypi/metasploit-mcp@3.0.0",
+      "dependsOn": [
+        "pkg:pypi/aiofile@3.9.0",
+        "pkg:pypi/annotated-doc@0.0.4",
+        "pkg:pypi/annotated-types@0.7.0",
+        "pkg:pypi/anyio@4.11.0",
+        "pkg:pypi/attrs@25.3.0",
+        "pkg:pypi/authlib@1.7.2",
+        "pkg:pypi/backports-asyncio-runner@1.2.0",
+        "pkg:pypi/backports-tarfile@1.2.0",
+        "pkg:pypi/beartype@0.22.9",
+        "pkg:pypi/black@26.5.1",
+        "pkg:pypi/cachetools@7.0.6",
+        "pkg:pypi/caio@0.9.25",
+        "pkg:pypi/certifi@2026.4.22",
+        "pkg:pypi/cffi@2.0.0",
+        "pkg:pypi/cfgv@3.4.0",
+        "pkg:pypi/charset-normalizer@3.4.3",
+        "pkg:pypi/click@8.3.0",
+        "pkg:pypi/colorama@0.4.6",
+        "pkg:pypi/coverage@7.10.7",
+        "pkg:pypi/cryptography@49.0.0",
+        "pkg:pypi/cyclopts@4.11.0",
+        "pkg:pypi/decorator@5.2.1",
+        "pkg:pypi/distlib@0.4.0",
+        "pkg:pypi/distro@1.9.0",
+        "pkg:pypi/dnspython@2.8.0",
+        "pkg:pypi/docstring-parser@0.17.0",
+        "pkg:pypi/docutils@0.22.2",
+        "pkg:pypi/email-validator@2.3.0",
+        "pkg:pypi/exceptiongroup@1.3.0",
+        "pkg:pypi/fastapi@0.136.1",
+        "pkg:pypi/fastmcp@3.2.4",
+        "pkg:pypi/filelock@3.29.5",
+        "pkg:pypi/flake8@7.3.0",
+        "pkg:pypi/griffelib@2.0.2",
+        "pkg:pypi/h11@0.16.0",
+        "pkg:pypi/httpcore@1.0.9",
+        "pkg:pypi/httptools@0.6.4",
+        "pkg:pypi/httpx-sse@0.4.1",
+        "pkg:pypi/httpx@0.28.1",
+        "pkg:pypi/identify@2.6.14",
+        "pkg:pypi/idna@3.18",
+        "pkg:pypi/importlib-metadata@8.7.1",
+        "pkg:pypi/iniconfig@2.1.0",
+        "pkg:pypi/jaraco-classes@3.4.0",
+        "pkg:pypi/jaraco-context@6.1.2",
+        "pkg:pypi/jaraco-functools@4.4.0",
+        "pkg:pypi/jeepney@0.9.0",
+        "pkg:pypi/joserfc@1.7.2",
+        "pkg:pypi/jsonpatch@1.33",
+        "pkg:pypi/jsonpointer@3.0.0",
+        "pkg:pypi/jsonref@1.1.0",
+        "pkg:pypi/jsonschema-path@0.3.4",
+        "pkg:pypi/jsonschema-specifications@2025.9.1",
+        "pkg:pypi/jsonschema@4.25.1",
+        "pkg:pypi/keyring@25.7.0",
+        "pkg:pypi/langchain-core@1.4.8",
+        "pkg:pypi/langchain-mcp-adapters@0.1.13",
+        "pkg:pypi/langchain-protocol@0.0.18",
+        "pkg:pypi/langsmith@0.9.7",
+        "pkg:pypi/markdown-it-py@4.0.0",
+        "pkg:pypi/mccabe@0.7.0",
+        "pkg:pypi/mcp@1.27.0",
+        "pkg:pypi/mdurl@0.1.2",
+        "pkg:pypi/mock@5.2.0",
+        "pkg:pypi/more-itertools@10.8.0",
+        "pkg:pypi/msgpack@1.2.1",
+        "pkg:pypi/mypy-extensions@1.1.0",
+        "pkg:pypi/mypy@1.18.2",
+        "pkg:pypi/nodeenv@1.9.1",
+        "pkg:pypi/openapi-pydantic@0.5.1",
+        "pkg:pypi/opentelemetry-api@1.41.1",
+        "pkg:pypi/orjson@3.11.9",
+        "pkg:pypi/packaging@25.0",
+        "pkg:pypi/pathable@0.4.4",
+        "pkg:pypi/pathspec@1.1.1",
+        "pkg:pypi/platformdirs@4.4.0",
+        "pkg:pypi/pluggy@1.6.0",
+        "pkg:pypi/pre-commit@4.3.0",
+        "pkg:pypi/psutil@7.1.3",
+        "pkg:pypi/py-key-value-aio@0.4.4",
+        "pkg:pypi/py@1.11.0",
+        "pkg:pypi/pycodestyle@2.14.0",
+        "pkg:pypi/pycparser@2.23",
+        "pkg:pypi/pydantic-core@2.33.2",
+        "pkg:pypi/pydantic-settings@2.11.0",
+        "pkg:pypi/pydantic@2.11.9",
+        "pkg:pypi/pyflakes@3.4.0",
+        "pkg:pypi/pygments@2.20.0",
+        "pkg:pypi/pyjwt@2.13.0",
+        "pkg:pypi/pymetasploit3@1.0.6",
+        "pkg:pypi/pyperclip@1.11.0",
+        "pkg:pypi/pytest-asyncio@1.4.0",
+        "pkg:pypi/pytest-cov@7.0.0",
+        "pkg:pypi/pytest-mock@3.15.1",
+        "pkg:pypi/pytest@9.1.1",
+        "pkg:pypi/python-discovery@1.4.3",
+        "pkg:pypi/python-dotenv@1.2.2",
+        "pkg:pypi/python-multipart@0.0.32",
+        "pkg:pypi/pytokens@0.4.1",
+        "pkg:pypi/pywin32-ctypes@0.2.3",
+        "pkg:pypi/pywin32@311",
+        "pkg:pypi/pyyaml@6.0.3",
+        "pkg:pypi/referencing@0.36.2",
+        "pkg:pypi/requests-toolbelt@1.0.0",
+        "pkg:pypi/requests@2.34.2",
+        "pkg:pypi/retry@0.9.2",
+        "pkg:pypi/rich-rst@1.3.1",
+        "pkg:pypi/rich@14.1.0",
+        "pkg:pypi/rpds-py@0.27.1",
+        "pkg:pypi/secretstorage@3.5.0",
+        "pkg:pypi/sniffio@1.3.1",
+        "pkg:pypi/sse-starlette@3.0.2",
+        "pkg:pypi/starlette@1.3.1",
+        "pkg:pypi/tenacity@9.1.2",
+        "pkg:pypi/tomli@2.2.1",
+        "pkg:pypi/typing-extensions@4.15.0",
+        "pkg:pypi/typing-inspection@0.4.2",
+        "pkg:pypi/uncalled-for@0.3.1",
+        "pkg:pypi/urllib3@2.7.0",
+        "pkg:pypi/uuid-utils@0.16.2",
+        "pkg:pypi/uvicorn@0.46.0",
+        "pkg:pypi/uvloop@0.21.0",
+        "pkg:pypi/virtualenv@21.5.1",
+        "pkg:pypi/watchfiles@1.1.0",
+        "pkg:pypi/websockets@15.0.1",
+        "pkg:pypi/xxhash@3.8.0",
+        "pkg:pypi/zipp@3.23.1",
+        "pkg:pypi/zstandard@0.25.0"
+      ]
+    }
+  ]
+}
