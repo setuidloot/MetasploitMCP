@@ -60,7 +60,7 @@ def test_bump_pyproject_version_updates_file(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_bump_pyproject_version_missing_version_line_raises(tmp_path: Path) -> None:
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text("[tool.poetry]\nname = \"metasploit-mcp\"\n", encoding="utf-8")
+    pyproject.write_text('[tool.poetry]\nname = "metasploit-mcp"\n', encoding="utf-8")
 
     with pytest.raises(ValueError, match="Could not find version line"):
         bump_pyproject_version(pyproject, "patch")

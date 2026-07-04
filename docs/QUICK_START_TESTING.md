@@ -51,7 +51,7 @@ poetry install
 
 ```bash
 # Start the MCP server
-poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 
 # You should see:
 # INFO - Successfully connected to Metasploit RPC at 127.0.0.1:55553
@@ -87,16 +87,16 @@ Expected output should show open ports like:
 cd /path/to/MetasploitMCP
 
 # List available tests
-poetry run python metasploitable3_test_harness.py --list-tests
+poetry run python tests/harness.py --list-tests
 
 # Run all tests
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --lport 4444
 
 # Or run a single test to verify setup
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --test "ProFTPD"
@@ -170,7 +170,7 @@ ping 10.0.2.4  # Should work!
 **Solution**: MCP server is not running
 ```bash
 # In Terminal 2, start the MCP server:
-poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 ```
 
 ### Issue: "Failed to connect to Metasploit RPC"
@@ -219,27 +219,27 @@ nmap -p 21,80,6697 10.0.2.15
 
 ```bash
 # List all available tests
-poetry run python metasploitable3_test_harness.py --list-tests
+poetry run python tests/harness.py --list-tests
 
 # Run all tests
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4
 
 # Run specific test
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --test "ProFTPD"
 
 # Verbose mode for debugging
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --verbose
 
 # Stop on first failure
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --stop-on-failure

@@ -14,7 +14,7 @@ import os
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import metasploit_mcp.server as MetasploitMCP
 from metasploit_mcp.server import (
@@ -28,13 +28,13 @@ from metasploit_mcp.server import (
     SESSION_LOCK_WAIT_TIMEOUT,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _unwrap(tool_obj):
-    for attr in ('func', '__wrapped__', '_func', 'fn'):
+    for attr in ("func", "__wrapped__", "_func", "fn"):
         if hasattr(tool_obj, attr):
             return getattr(tool_obj, attr)
     return tool_obj
@@ -48,7 +48,7 @@ def _make_mock_client(sessions_dict=None):
     """Build a MockMsfRpcClient with the given sessions."""
     client = Mock()
     client.core = Mock()
-    client.core.version = {'version': '6.3.0'}
+    client.core.version = {"version": "6.3.0"}
     client.modules = Mock()
     client.sessions = Mock()
     client.jobs = Mock()
@@ -73,6 +73,7 @@ def _make_mock_client(sessions_dict=None):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _reset_session_lock_state():
     """Clear all session locks and mode tracking between tests."""
@@ -87,13 +88,15 @@ def _reset_session_lock_state():
 def mock_asyncio_to_thread():
     async def _mock(func, *args, **kwargs):
         return func(*args, **kwargs)
-    with patch('asyncio.to_thread', side_effect=_mock):
+
+    with patch("asyncio.to_thread", side_effect=_mock):
         yield
 
 
 # ---------------------------------------------------------------------------
 # Unit tests for lock helpers
 # ---------------------------------------------------------------------------
+
 
 class TestGetSessionLock:
     @pytest.mark.asyncio
@@ -158,14 +161,17 @@ class TestSessionListNormalization:
 # Concurrency tests for send_session_command
 # ---------------------------------------------------------------------------
 
+
 class TestSendSessionCommandLocking:
 
     @pytest.mark.asyncio
     async def test_concurrent_same_session_serialized(self, mock_asyncio_to_thread):
         """Two concurrent calls on the SAME session execute one after the other."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
 
         execution_order = []
 
@@ -177,7 +183,7 @@ class TestSendSessionCommandLocking:
 
         session_obj.write = Mock(side_effect=tracking_write)
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             r1, r2 = await asyncio.gather(
                 send_session_command(1, "sysinfo"),
                 send_session_command(1, "getuid"),
@@ -190,19 +196,21 @@ class TestSendSessionCommandLocking:
         # scheduling, but we know one must finish before the other starts.
         starts = [i for i, e in enumerate(execution_order) if e.startswith("start-")]
         ends = [i for i, e in enumerate(execution_order) if e.startswith("end-")]
-        assert ends[0] < starts[1], (
-            f"First command should finish before second starts: {execution_order}"
-        )
+        assert (
+            ends[0] < starts[1]
+        ), f"First command should finish before second starts: {execution_order}"
 
     @pytest.mark.asyncio
     async def test_different_sessions_not_blocked(self, mock_asyncio_to_thread):
         """Calls on DIFFERENT sessions should not block each other."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-            "2": {"type": "meterpreter", "target_host": "10.0.0.2"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+                "2": {"type": "meterpreter", "target_host": "10.0.0.2"},
+            }
+        )
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             r1, r2 = await asyncio.gather(
                 send_session_command(1, "sysinfo"),
                 send_session_command(2, "getuid"),
@@ -215,15 +223,19 @@ class TestSendSessionCommandLocking:
     async def test_busy_status_on_lock_timeout(self, mock_asyncio_to_thread):
         """If the lock is held longer than SESSION_LOCK_WAIT_TIMEOUT the caller
         gets status='busy'."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
 
         lock = await _get_session_lock("1")
         await lock.acquire()
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client), \
-             patch('metasploit_mcp.server.SESSION_LOCK_WAIT_TIMEOUT', 0.1):
+        with (
+            patch("metasploit_mcp.server.get_msf_client", return_value=client),
+            patch("metasploit_mcp.server.SESSION_LOCK_WAIT_TIMEOUT", 0.1),
+        ):
             result = await send_session_command(1, "sysinfo")
 
         lock.release()
@@ -239,7 +251,7 @@ class TestSendSessionCommandLocking:
         _session_locks["99"] = asyncio.Lock()
         session_shell_type["99"] = "meterpreter"
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await send_session_command(99, "whoami")
 
         assert result["status"] == "error"
@@ -250,7 +262,7 @@ class TestSendSessionCommandLocking:
     async def test_int_keyed_session_lookup_succeeds(self, mock_asyncio_to_thread):
         """RPC returns int session IDs; command lookup should still succeed."""
         client, _ = _make_mock_client({1: {"type": "meterpreter", "target_host": "10.0.0.1"}})
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await send_session_command(1, "whoami")
 
         assert result["status"] == "success"
@@ -259,9 +271,11 @@ class TestSendSessionCommandLocking:
     @pytest.mark.asyncio
     async def test_meterpreter_command_returns_on_inactivity(self, mock_asyncio_to_thread):
         """Meterpreter commands with output but no prompt should complete via inactivity."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
 
         read_chunks = ["uid=33(www-data)\n", "", "", ""]
 
@@ -272,7 +286,7 @@ class TestSendSessionCommandLocking:
 
         session_obj.read = Mock(side_effect=_read)
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await send_session_command(
                 1,
                 "getuid",
@@ -287,12 +301,14 @@ class TestSendSessionCommandLocking:
     @pytest.mark.asyncio
     async def test_meterpreter_command_timeout_returns_partial_output(self, mock_asyncio_to_thread):
         """Timeout should still return buffered output and mark reason=timeout."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
         session_obj.read = Mock(return_value="")
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await send_session_command(
                 1,
                 "sysinfo",
@@ -308,6 +324,7 @@ class TestSendSessionCommandLocking:
 # ---------------------------------------------------------------------------
 # Concurrency tests for terminate_session
 # ---------------------------------------------------------------------------
+
 
 class TestTerminateSessionLocking:
 
@@ -328,8 +345,10 @@ class TestTerminateSessionLocking:
                 return {}
             return result
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client), \
-             patch('asyncio.to_thread', side_effect=mock_to_thread):
+        with (
+            patch("metasploit_mcp.server.get_msf_client", return_value=client),
+            patch("asyncio.to_thread", side_effect=mock_to_thread),
+        ):
             result = await terminate_session(1)
 
         assert result["status"] == "success"
@@ -343,8 +362,10 @@ class TestTerminateSessionLocking:
         lock = await _get_session_lock("1")
         await lock.acquire()
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client), \
-             patch('metasploit_mcp.server.SESSION_LOCK_WAIT_TIMEOUT', 0.1):
+        with (
+            patch("metasploit_mcp.server.get_msf_client", return_value=client),
+            patch("metasploit_mcp.server.SESSION_LOCK_WAIT_TIMEOUT", 0.1),
+        ):
             result = await terminate_session(1)
 
         lock.release()
@@ -368,8 +389,10 @@ class TestTerminateSessionLocking:
                 return {}
             return result
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client), \
-             patch('asyncio.to_thread', side_effect=mock_to_thread):
+        with (
+            patch("metasploit_mcp.server.get_msf_client", return_value=client),
+            patch("asyncio.to_thread", side_effect=mock_to_thread),
+        ):
             result = await terminate_session(1)
 
         assert result["status"] == "success"
@@ -382,7 +405,7 @@ class TestTerminateSessionLocking:
         session_shell_type["50"] = "meterpreter"
         _session_locks["50"] = asyncio.Lock()
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await terminate_session(50)
 
         assert result["status"] == "error"
@@ -403,8 +426,10 @@ class TestTerminateSessionLocking:
                 return {}
             return result
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client), \
-             patch('asyncio.to_thread', side_effect=mock_to_thread):
+        with (
+            patch("metasploit_mcp.server.get_msf_client", return_value=client),
+            patch("asyncio.to_thread", side_effect=mock_to_thread),
+        ):
             result = await terminate_session(1)
 
         assert result["status"] == "success"
@@ -415,6 +440,7 @@ class TestTerminateSessionLocking:
 # Lock release on error paths
 # ---------------------------------------------------------------------------
 
+
 class TestLockReleaseOnErrors:
 
     @pytest.mark.asyncio
@@ -422,12 +448,14 @@ class TestLockReleaseOnErrors:
         """The session lock must be released even when an RPC error occurs."""
         from pymetasploit3.msfrpc import MsfRpcError
 
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
         session_obj.write = Mock(side_effect=MsfRpcError("RPC failure"))
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await send_session_command(1, "sysinfo")
 
         assert result["status"] == "error"
@@ -438,12 +466,14 @@ class TestLockReleaseOnErrors:
     @pytest.mark.asyncio
     async def test_lock_released_after_unexpected_exception(self, mock_asyncio_to_thread):
         """Lock must be released even on unexpected exceptions."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
         session_obj.write = Mock(side_effect=RuntimeError("boom"))
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client):
+        with patch("metasploit_mcp.server.get_msf_client", return_value=client):
             result = await send_session_command(1, "sysinfo")
 
         assert result["status"] == "error"
@@ -454,9 +484,11 @@ class TestLockReleaseOnErrors:
     @pytest.mark.asyncio
     async def test_lock_released_after_timeout(self, mock_asyncio_to_thread):
         """Lock must be released when the command itself times out."""
-        client, session_obj = _make_mock_client({
-            "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
-        })
+        client, session_obj = _make_mock_client(
+            {
+                "1": {"type": "meterpreter", "target_host": "10.0.0.1"},
+            }
+        )
 
         async def slow_to_thread(func, *args, **kwargs):
             result = func(*args, **kwargs)
@@ -464,8 +496,10 @@ class TestLockReleaseOnErrors:
 
         session_obj.read = Mock(return_value="")
 
-        with patch('metasploit_mcp.server.get_msf_client', return_value=client), \
-             patch('asyncio.to_thread', side_effect=slow_to_thread):
+        with (
+            patch("metasploit_mcp.server.get_msf_client", return_value=client),
+            patch("asyncio.to_thread", side_effect=slow_to_thread),
+        ):
             result = await send_session_command(1, "sysinfo", timeout_seconds=1)
 
         assert result["status"] == "timeout"

@@ -2,9 +2,14 @@
 name = "metasploit-mcp"
 version = "3.0.0"
 description = "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol"
-authors = ["MetasploitMCP Contributors"]
+authors = [
+    "GH05TCREW <harmasic@gmail.com>",
+    "cbdmaul <cbdmaul@gmail.com>",
+    "MetasploitMCP Contributors",
+]
+maintainers = ["cbdmaul <cbdmaul@gmail.com>"]
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 homepage = "https://github.com/cbdmaul/MetasploitMCP"
 repository = "https://github.com/cbdmaul/MetasploitMCP"
 documentation = "https://github.com/cbdmaul/MetasploitMCP/tree/main/docs"
@@ -12,15 +17,14 @@ keywords = ["metasploit", "mcp", "security", "penetration-testing", "rpc"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Information Technology",
-    "Intended Audience :: System Administrators", 
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: System :: Networking",
     "Topic :: System :: Systems Administration",
@@ -57,14 +61,23 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "-ra -q --strict-markers"
+minversion = "7.0"
+addopts = "-ra --strict-markers --disable-warnings"
 testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 asyncio_mode = "auto"
 markers = [
     "unit: marks tests as unit tests",
-    "integration: marks tests as integration tests", 
-    "slow: marks tests as slow running"
+    "integration: marks tests as integration tests",
+    "slow: marks tests as slow running (use --run-slow to run)",
+    "network: marks tests that require network access (use --run-network to run)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore:.*unclosed.*:ResourceWarning",
 ]
 
 [tool.coverage.run]
@@ -85,7 +98,7 @@ exclude_lines = [
 
 [tool.black]
 line-length = 100
-target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+target-version = ['py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 extend-exclude = '''
 /(

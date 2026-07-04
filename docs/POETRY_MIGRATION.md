@@ -17,7 +17,7 @@ poetry install
 poetry shell
 
 # Or run commands in the poetry environment
-poetry run python MetasploitMCP.py --help
+poetry run metasploit-mcp --help
 ```
 
 ### Development
@@ -26,7 +26,7 @@ poetry run python MetasploitMCP.py --help
 poetry install --with dev
 
 # Run tests
-poetry run python run_all_tests.py
+poetry run pytest
 
 # Or use pytest directly
 poetry run pytest tests/ -v

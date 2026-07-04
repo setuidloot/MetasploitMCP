@@ -63,16 +63,6 @@ class TestMessageConstruction:
 
     def test_exploit_without_session_message(self):
         """Test message for exploit without session."""
-        status, message = self._construct_message(
-            "exploit/windows/smb/ms17_010_eternalblue", 789
-        )
+        status, message = self._construct_message("exploit/windows/smb/ms17_010_eternalblue", 789)
         assert status == "warning"
         assert "No session detected within timeout" in message
-
-
-
-
-
-
-
-

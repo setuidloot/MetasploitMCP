@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.cbdmaul/metasploit-mcp",
+  "description": "Metasploit MCP Server - controlled access to Metasploit Framework functionality (exploits, payloads, sessions, listeners) via the Model Context Protocol.",
+  "version": "3.0.0",
+  "repository": {
+    "url": "https://github.com/cbdmaul/MetasploitMCP",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registry_type": "pypi",
+      "registry_base_url": "https://pypi.org",
+      "identifier": "metasploit-mcp",
+      "version": "3.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environment_variables": [
+        {
+          "name": "MSF_PASSWORD",
+          "description": "Password for the Metasploit RPC service (msfrpcd -P ...).",
+          "is_required": true,
+          "is_secret": true
+        },
+        {
+          "name": "MSF_SERVER",
+          "description": "Host of the Metasploit RPC service.",
+          "is_required": false,
+          "default": "127.0.0.1"
+        },
+        {
+          "name": "MSF_PORT",
+          "description": "Port of the Metasploit RPC service.",
+          "is_required": false,
+          "default": "55553"
+        },
+        {
+          "name": "MSF_SSL",
+          "description": "Whether the Metasploit RPC service uses SSL ('true' or 'false').",
+          "is_required": false,
+          "default": "false"
+        },
+        {
+          "name": "MSF_RPC_PROTOCOL",
+          "description": "RPC serialization protocol: 'msgpack' (default) or 'jsonrpc'.",
+          "is_required": false,
+          "default": "msgpack"
+        },
+        {
+          "name": "PAYLOAD_SAVE_DIR",
+          "description": "Directory where generated payloads are written (defaults to ~/payloads).",
+          "is_required": false
+        }
+      ]
+    }
+  ]
+}

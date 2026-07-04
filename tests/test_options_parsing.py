@@ -10,24 +10,24 @@ from unittest.mock import Mock, patch
 from typing import Dict, Any, Union
 
 # Add the parent directory to the path to import metasploit_mcp.server as MetasploitMCP
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Mock the dependencies that aren't available in test environment
 mock_uvicorn = Mock()
 mock_uvicorn.server = Mock()
-sys.modules['uvicorn'] = mock_uvicorn
-sys.modules['uvicorn.server'] = mock_uvicorn.server
-sys.modules['fastapi'] = Mock()
-sys.modules['mcp.server.fastmcp'] = Mock()
-sys.modules['mcp.server.sse'] = Mock()
-sys.modules['pymetasploit3.msfrpc'] = Mock()
-sys.modules['starlette.applications'] = Mock()
-sys.modules['starlette.routing'] = Mock()
-sys.modules['mcp.server.session'] = Mock()
+sys.modules["uvicorn"] = mock_uvicorn
+sys.modules["uvicorn.server"] = mock_uvicorn.server
+sys.modules["fastapi"] = Mock()
+sys.modules["mcp.server.fastmcp"] = Mock()
+sys.modules["mcp.server.sse"] = Mock()
+sys.modules["pymetasploit3.msfrpc"] = Mock()
+sys.modules["starlette.applications"] = Mock()
+sys.modules["starlette.routing"] = Mock()
+sys.modules["mcp.server.session"] = Mock()
 # Mock fastmcp before it's imported
-sys.modules['fastmcp'] = Mock()
-sys.modules['fastmcp.client'] = Mock()
-sys.modules['fastmcp.client.transports'] = Mock()
+sys.modules["fastmcp"] = Mock()
+sys.modules["fastmcp.client"] = Mock()
+sys.modules["fastmcp.client.transports"] = Mock()
 
 # Import the function we want to test
 from metasploit_mcp.server import _parse_options_gracefully
@@ -53,7 +53,7 @@ class TestParseOptionsGracefully:
         """Test that empty string returns empty dictionary."""
         result = _parse_options_gracefully("")
         assert result == {}
-        
+
         result = _parse_options_gracefully("   ")
         assert result == {}
 
@@ -90,12 +90,7 @@ class TestParseOptionsGracefully:
     def test_boolean_conversion(self):
         """Test boolean value conversion."""
         input_str = "ExitOnSession=true,Verbose=false,Debug=TRUE,Silent=FALSE"
-        expected = {
-            "ExitOnSession": True, 
-            "Verbose": False,
-            "Debug": True,
-            "Silent": False
-        }
+        expected = {"ExitOnSession": True, "Verbose": False, "Debug": True, "Silent": False}
         result = _parse_options_gracefully(input_str)
         assert result == expected
 
@@ -109,12 +104,7 @@ class TestParseOptionsGracefully:
     def test_mixed_types(self):
         """Test parsing with mixed value types."""
         input_str = "LHOST=192.168.1.100,LPORT=4444,SSL=true,Retries=3"
-        expected = {
-            "LHOST": "192.168.1.100",
-            "LPORT": 4444,
-            "SSL": True,
-            "Retries": 3
-        }
+        expected = {"LHOST": "192.168.1.100", "LPORT": 4444, "SSL": True, "Retries": 3}
         result = _parse_options_gracefully(input_str)
         assert result == expected
 
@@ -131,7 +121,7 @@ class TestParseOptionsGracefully:
         expected = {
             "CertFile": "/path/to/cert.pem",
             "URL": "https://example.com:8443/api",
-            "Command": "ls -la"
+            "Command": "ls -la",
         }
         result = _parse_options_gracefully(input_str)
         assert result == expected
@@ -199,29 +189,26 @@ class TestParseOptionsGracefully:
     def test_special_characters_in_values(self):
         """Test handling of special characters in values."""
         input_str = "Password=p@ssw0rd!,Path=/home/user/file.txt,Regex=\\d+"
-        expected = {
-            "Password": "p@ssw0rd!",
-            "Path": "/home/user/file.txt",
-            "Regex": "\\d+"
-        }
+        expected = {"Password": "p@ssw0rd!", "Path": "/home/user/file.txt", "Regex": "\\d+"}
         result = _parse_options_gracefully(input_str)
         assert result == expected
 
-    @pytest.mark.parametrize("input_val,expected", [
-        # Basic cases
-        ({"key": "value"}, {"key": "value"}),
-        ("key=value", {"key": "value"}),
-        (None, {}),
-        ("", {}),
-        
-        # Type conversions
-        ("port=8080", {"port": 8080}),
-        ("enabled=true", {"enabled": True}),
-        ("disabled=false", {"disabled": False}),
-        
-        # Complex cases
-        ("a=1,b=true,c=text", {"a": 1, "b": True, "c": "text"}),
-    ])
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            # Basic cases
+            ({"key": "value"}, {"key": "value"}),
+            ("key=value", {"key": "value"}),
+            (None, {}),
+            ("", {}),
+            # Type conversions
+            ("port=8080", {"port": 8080}),
+            ("enabled=true", {"enabled": True}),
+            ("disabled=false", {"disabled": False}),
+            # Complex cases
+            ("a=1,b=true,c=text", {"a": 1, "b": True, "c": "text"}),
+        ],
+    )
     def test_parametrized_cases(self, input_val, expected):
         """Parametrized test cases for various inputs."""
         result = _parse_options_gracefully(input_val)
@@ -239,11 +226,11 @@ class TestParseOptionsGracefully:
 
     def test_logging_behavior(self):
         """Test that logging occurs during string conversion."""
-        with patch('metasploit_mcp.server.logger') as mock_logger:
+        with patch("metasploit_mcp.server.logger") as mock_logger:
             _parse_options_gracefully("LHOST=192.168.1.100,LPORT=4444")
             # Should log the conversion
             assert mock_logger.info.call_count >= 1
-            
+
             # Should contain conversion messages
             call_args = [call[0][0] for call in mock_logger.info.call_args_list]
             assert any("Converting string format" in msg for msg in call_args)
@@ -298,7 +285,7 @@ class TestParseOptionsGracefully:
             "RHOSTS": "10.77.0.191",
             "RPORT": 80,
             "TARGETURI": "/cgi-bin/test.cgi",
-            "USERNAME": "admin"
+            "USERNAME": "admin",
         }
         result = _parse_options_gracefully(input_str)
         assert result == expected

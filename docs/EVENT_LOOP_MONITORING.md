@@ -36,15 +36,15 @@ All configuration is done via environment variables, making it easy to enable de
 
 ```bash
 # Watchdog is enabled by default - just run normally
-python MetasploitMCP.py
+metasploit-mcp
 
 # Customize thresholds
 EVENT_LOOP_WATCHDOG_THRESHOLD=0.3 \
 EVENT_LOOP_BACKLOG_THRESHOLD=50 \
-python MetasploitMCP.py
+metasploit-mcp
 
 # Disable watchdog if needed
-EVENT_LOOP_WATCHDOG=false python MetasploitMCP.py
+EVENT_LOOP_WATCHDOG=false metasploit-mcp
 ```
 
 ### Full Debug Mode
@@ -55,7 +55,7 @@ For comprehensive debugging, enable asyncio debug mode as well:
 ASYNCIO_DEBUG=true \
 EVENT_LOOP_WATCHDOG_THRESHOLD=0.3 \
 LOG_LEVEL=DEBUG \
-python MetasploitMCP.py
+metasploit-mcp
 ```
 
 ## Log Output Examples
@@ -78,7 +78,7 @@ When the watchdog detects the event loop is blocked:
 === Thread stack traces at time of blocking ===
 
 --- MainThread (likely event loop) ---
-File "/path/to/MetasploitMCP.py", line 342, in some_function
+File "src/metasploit_mcp/server.py", line 342, in some_function
     result = blocking_operation()  # <- BLOCKING CALL!
 ```
 
@@ -159,12 +159,12 @@ stats = get_monitoring_stats()
 
 2. **Development**: Enable `ASYNCIO_DEBUG=true` with low thresholds to catch issues early:
    ```bash
-   ASYNCIO_DEBUG=true EVENT_LOOP_WATCHDOG_THRESHOLD=0.2 python MetasploitMCP.py
+   ASYNCIO_DEBUG=true EVENT_LOOP_WATCHDOG_THRESHOLD=0.2 metasploit-mcp
    ```
 
 3. **Production**: The default settings work well for production. Adjust thresholds if you see too many warnings:
    ```bash
-   EVENT_LOOP_WATCHDOG_THRESHOLD=1.0 EVENT_LOOP_BACKLOG_THRESHOLD=200 python MetasploitMCP.py
+   EVENT_LOOP_WATCHDOG_THRESHOLD=1.0 EVENT_LOOP_BACKLOG_THRESHOLD=200 metasploit-mcp
    ```
 
 4. **Disable if Needed**: If monitoring overhead is a concern, disable with `EVENT_LOOP_WATCHDOG=false`

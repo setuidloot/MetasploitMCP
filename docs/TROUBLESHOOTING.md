@@ -15,7 +15,7 @@ Error: Connection refused to http://127.0.0.1:8085
 
 1. **Verify MCP Server is Running:**
    ```bash
-   poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+   poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
    ```
 
 2. **Check the Port:**
@@ -58,12 +58,12 @@ MetasploitMCP supports both msgpack RPC (default) and JSON-RPC protocols. You ca
 ```bash
 # Use JSON-RPC (useful for debugging network traffic)
 export MSF_RPC_PROTOCOL=jsonrpc
-poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 
 # Use msgpack (default, recommended for production)
 export MSF_RPC_PROTOCOL=msgpack
 # or simply omit the variable
-poetry run python MetasploitMCP.py --transport http --host 127.0.0.1 --port 8085
+poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 ```
 
 **When to Use JSON-RPC:**
@@ -345,13 +345,13 @@ poetry run python test_mcp_connection.py --url http://localhost:8085
 ### Enable Debug Logging
 
 ```bash
-LOG_LEVEL=DEBUG poetry run python MetasploitMCP.py --transport http
+LOG_LEVEL=DEBUG poetry run metasploit-mcp --transport http
 ```
 
 ### Test with Verbose Mode
 
 ```bash
-poetry run python metasploitable3_test_harness.py \
+poetry run python tests/harness.py \
     --target 10.0.2.15 \
     --lhost 10.0.2.4 \
     --verbose

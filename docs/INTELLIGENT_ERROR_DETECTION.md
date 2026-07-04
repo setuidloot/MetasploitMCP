@@ -160,7 +160,7 @@ await run_exploit(
 ### Example 3: Using Test Harness
 
 ```python
-# In metasploitable3_test_harness.py
+# In tests/harness.py
 ExploitTest(
     name="UnrealIRCd Backdoor",
     module="exploit/unix/irc/unreal_ircd_3281_backdoor",
@@ -208,7 +208,7 @@ The feature is tested in:
 - This detection only activates when an actual error occurs (zero performance overhead for correct configs)
 - The error is raised as a `ValueError` for easy catching and handling
 - The feature works in both RPC mode (`run_as_job=True`) and console mode (`run_as_job=False`)
-- The test harness (`metasploitable3_test_harness.py`) automatically separates payload options, so this error is less likely there
+- The test harness (`tests/harness.py`) automatically separates payload options, so this error is less likely there
 
 ## 🔗 Related Documentation
 
