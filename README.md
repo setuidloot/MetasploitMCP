@@ -5,10 +5,16 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-A modern, secure Model Context Protocol (MCP) server that provides AI assistants with controlled access to Metasploit Framework functionality.
+An **unofficial**, modern, secure Model Context Protocol (MCP) server that provides AI assistants with controlled access to Metasploit Framework functionality.
+
+> **Unofficial project — not affiliated with Rapid7.** "Metasploit" is a trademark of Rapid7. This is an
+> independent, community-maintained project with **no affiliation, sponsorship, endorsement, or support
+> from Rapid7**. It is not an official Rapid7 or Metasploit product.
 
 > **Fork notice:** This project is a fork of [GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP),
-> the original Metasploit MCP server created by GH05TCREW. It is distributed under the same Apache License 2.0.
+> the original Metasploit MCP server created by GH05TCREW. Full credit for the original design and
+> implementation goes to GH05TCREW; this fork contributes **additional features and the PyPI release**
+> on top of that work. It is distributed under the same Apache License 2.0.
 > See [Relationship to upstream](#relationship-to-upstream) for what this fork changes and improves.
 
 ## Features
@@ -45,7 +51,7 @@ A modern, secure Model Context Protocol (MCP) server that provides AI assistants
 
 ```bash
 # Clone the repository
-git clone https://github.com/cbdmaul/MetasploitMCP.git
+git clone https://github.com/setuidloot/MetasploitMCP.git
 cd MetasploitMCP
 
 # Install with Poetry
@@ -366,8 +372,9 @@ install and SSE transport.
 
 **What this fork changes and improves:**
 
-- **Packaging & layout** — Poetry-based packaging, a `src/metasploit_mcp/` layout, and a
-  `metasploit-mcp` CLI entry point (replacing the single-file `requirements.txt` setup).
+- **Packaging & distribution** — Poetry-based packaging, a `src/metasploit_mcp/` layout, a
+  `metasploit-mcp` CLI entry point (replacing the single-file `requirements.txt` setup), and the
+  **first PyPI release** of the project (`pip install metasploit-mcp`).
 - **Transport** — FastMCP HTTP (streamable) transport, replacing SSE.
 - **Dynamic option detection** — module/payload options are queried live from Metasploit instead of
   being hardcoded, with detection of confused module/payload options.
@@ -389,8 +396,8 @@ upstream [GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP) p
 
 ## Acknowledgments
 
-- **[GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP)**: The original project this fork is based on
-- **Metasploit Framework**: The powerful penetration testing platform
+- **[GH05TCREW/MetasploitMCP](https://github.com/GH05TCREW/MetasploitMCP)**: The original project this fork is based on — full credit to GH05TCREW for the core design and implementation
+- **Metasploit Framework**: The powerful penetration testing platform, by Rapid7 (this project is unaffiliated with and unsupported by Rapid7)
 - **Model Context Protocol**: The standardized AI-tool communication protocol
 - **FastMCP**: Modern MCP server implementation framework
 - **Poetry**: Modern Python dependency management

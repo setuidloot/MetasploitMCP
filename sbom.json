@@ -9,7 +9,7 @@
       "bom-ref": "pkg:pypi/metasploit-mcp@3.0.0",
       "name": "metasploit-mcp",
       "version": "3.0.0",
-      "description": "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol",
+      "description": "Unofficial Metasploit MCP Server (not affiliated with or endorsed by Rapid7) - provides Metasploit Framework functionality via the Model Context Protocol. A fork of GH05TCREW/MetasploitMCP.",
       "purl": "pkg:pypi/metasploit-mcp@3.0.0",
       "licenses": [
         {

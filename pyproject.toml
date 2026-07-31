@@ -1,18 +1,18 @@
 [tool.poetry]
 name = "metasploit-mcp"
 version = "3.0.0"
-description = "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol"
+description = "Unofficial Metasploit MCP Server (not affiliated with or endorsed by Rapid7) - provides Metasploit Framework functionality via the Model Context Protocol. A fork of GH05TCREW/MetasploitMCP."
 authors = [
     "GH05TCREW <harmasic@gmail.com>",
-    "cbdmaul <cbdmaul@gmail.com>",
+    "setuidloot <michael@mccord.ai>",
     "MetasploitMCP Contributors",
 ]
-maintainers = ["cbdmaul <cbdmaul@gmail.com>"]
+maintainers = ["setuidloot <michael@mccord.ai>"]
 readme = "README.md"
 license = "Apache-2.0"
-homepage = "https://github.com/cbdmaul/MetasploitMCP"
-repository = "https://github.com/cbdmaul/MetasploitMCP"
-documentation = "https://github.com/cbdmaul/MetasploitMCP/tree/main/docs"
+homepage = "https://github.com/setuidloot/MetasploitMCP"
+repository = "https://github.com/setuidloot/MetasploitMCP"
+documentation = "https://github.com/setuidloot/MetasploitMCP/tree/main/docs"
 keywords = ["metasploit", "mcp", "security", "penetration-testing", "rpc"]
 classifiers = [
     "Development Status :: 4 - Beta",

@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
-  "name": "io.github.cbdmaul/metasploit-mcp",
+  "name": "io.github.setuidloot/metasploit-mcp",
   "description": "Metasploit MCP Server - controlled access to Metasploit Framework functionality (exploits, payloads, sessions, listeners) via the Model Context Protocol.",
   "version": "3.0.0",
   "repository": {
-    "url": "https://github.com/cbdmaul/MetasploitMCP",
+    "url": "https://github.com/setuidloot/MetasploitMCP",
     "source": "github"
   },
   "packages": [

@@ -24,3 +24,12 @@ Third-party software
 This software integrates with, but does not redistribute, the Metasploit
 Framework (https://www.metasploit.com/) via its RPC interface. The Metasploit
 Framework is a separate work distributed under its own license.
+
+------------------------------------------------------------------------------
+Trademarks / no affiliation
+------------------------------------------------------------------------------
+
+"Metasploit" is a trademark of Rapid7, LLC. This is an unofficial, independent
+project and is NOT affiliated with, sponsored by, endorsed by, or supported by
+Rapid7 in any way. Any use of the "Metasploit" name is nominative, solely to
+describe interoperability with the Metasploit Framework.
