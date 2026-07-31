@@ -1574,6 +1574,36 @@ async def _get_module_valid_options(module_obj: Any) -> set:
         return set()
 
 
+# Characters that must never appear in a module option key or value. A newline or
+# carriage return lets an attacker terminate the intended `set <key> <value>`
+# console command and inject additional commands (CVE-2026-5463 / GHSA-qpc3-8vqg-8g6w,
+# unpatched upstream in pymetasploit3). NUL is rejected defensively.
+_UNSAFE_OPTION_CHARS = ("\n", "\r", "\x00")
+
+
+def _reject_unsafe_option_chars(options: Dict[str, Any], context: str = "module") -> None:
+    """Raise ValueError if any option key or string value contains a control
+    character that could break out of a console `set` command.
+
+    Applied to every execution path (RPC and console) as defense in depth so a
+    single validation point protects all option handling regardless of which
+    backend a given module ends up using.
+    """
+    if not isinstance(options, dict):
+        return
+    for key, value in options.items():
+        if isinstance(key, str) and any(c in key for c in _UNSAFE_OPTION_CHARS):
+            raise ValueError(
+                f"Illegal control character in {context} option name "
+                f"{key!r}: newline/carriage-return/NUL are not allowed."
+            )
+        if isinstance(value, str) and any(c in value for c in _UNSAFE_OPTION_CHARS):
+            raise ValueError(
+                f"Illegal control character in value for {context} option {key!r}: "
+                f"newline/carriage-return/NUL are not allowed (command-injection guard)."
+            )
+
+
 async def _set_module_options(
     module_obj: Any, options: Dict[str, Any], module_type: str = "module", payload_obj: Any = None
 ):
@@ -1587,6 +1617,9 @@ async def _set_module_options(
     """
     module_fullname = getattr(module_obj, "fullname", "unknown")
     logger.debug(f"Setting options for module {module_fullname}: {options}")
+
+    # Reject control characters before any option reaches the datastore/console.
+    _reject_unsafe_option_chars(options, context=module_type)
 
     # Get valid options for this module
     valid_module_options = await _get_module_valid_options(module_obj)
@@ -2261,6 +2294,12 @@ async def _execute_module_console(
     exit_terms_regexes: Optional[List[re.Pattern]] = None,
 ) -> Dict[str, Any]:
     """Helper to execute a module synchronously via console."""
+    # Guard against console command injection via option values/keys before they
+    # are interpolated into `set <key> <value>` commands (CVE-2026-5463).
+    _reject_unsafe_option_chars(module_options, context=module_type)
+    if isinstance(payload_spec, dict):
+        _reject_unsafe_option_chars(payload_spec.get("options", {}), context="payload")
+
     # Determine full path needed for 'use' command
     if "/" not in module_name:
         full_module_path = f"{module_type}/{module_name}"
