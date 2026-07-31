@@ -11,26 +11,26 @@
 
 ## 2. Phase 1 — Module check tool
 
-- [ ] 2.1 Implement `check_vulnerability` routing through existing option-validation helpers with `action=check`
-- [ ] 2.2 Map check outcomes to structured states (vulnerable / safe / unsupported / error)
-- [ ] 2.3 Guard so the check path can never fall through to exploit execution
-- [ ] 2.4 Tests: vulnerable, safe, unsupported-module, missing-required-option, and "no session/payload created" assertions
+- [x] 2.1 Implement `check_vulnerability` routing through existing option-validation helpers with `action=check`
+- [x] 2.2 Map check outcomes to structured states (vulnerable / safe / unsupported / error)
+- [x] 2.3 Guard so the check path can never fall through to exploit execution
+- [x] 2.4 Tests: vulnerable, safe, unsupported-module, missing-required-option, and "no session/payload created" assertions
 
 ## 3. Phase 1 — Async module results
 
-- [ ] 3.1 Ensure non-blocking module launches return a stable execution/job identifier
-- [ ] 3.2 Implement `get_module_results(execution_id)` returning collected output + status (running/completed)
-- [ ] 3.3 Handle unknown identifier with a structured not-found error
-- [ ] 3.4 Tests: completed run, in-progress run, unknown id
+- [x] 3.1 Ensure non-blocking module launches return a stable execution/job identifier
+- [x] 3.2 Implement `get_module_results(execution_id)` returning collected output + status (running/completed)
+- [x] 3.3 Handle unknown identifier with a structured not-found error
+- [x] 3.4 Tests: completed run, in-progress run, unknown id
 
 ## 4. Phase 2 — Safety controls (posture change)
 
-- [ ] 4.1 Add `dangerous_actions_enabled` config (CLI `--allow-dangerous`, env `MSF_MCP_ALLOW_DANGEROUS`, default off) in `__init__.py`
-- [ ] 4.2 Add a shared gate wrapper/decorator that classifies tools via their destructive annotation and blocks dangerous tools when disabled
-- [ ] 4.3 Apply the gate to all destructive tools (run_exploit, run_auxiliary_module, run_post_module, generate_payload delivery, send_session_command, terminate_session, start_listener, stop_job, kill_all_handler_jobs)
-- [ ] 4.4 Implement configurable per-client rate limiter with a safe default; reject over-limit with a structured error
-- [ ] 4.5 Report safety posture (dangerous enabled?, active rate limit) in `health_check`
-- [ ] 4.6 Tests: gate off blocks dangerous / allows read-only; gate on permits; rate-limit within/over/configurable
+- [x] 4.1 Add `dangerous_actions_enabled` config (CLI `--allow-dangerous`, env `MSF_MCP_ALLOW_DANGEROUS`, default off) in `__init__.py`
+- [x] 4.2 Add a shared gate wrapper/decorator that classifies tools via their destructive annotation and blocks dangerous tools when disabled
+- [x] 4.3 Apply the gate to all destructive tools (run_exploit, run_auxiliary_module, run_post_module, generate_payload delivery, send_session_command, terminate_session, start_listener, stop_job, kill_all_handler_jobs)
+- [x] 4.4 Implement configurable per-client rate limiter with a safe default; reject over-limit with a structured error
+- [x] 4.5 Report safety posture (dangerous enabled?, active rate limit) in `health_check`
+- [x] 4.6 Tests: gate off blocks dangerous / allows read-only; gate on permits; rate-limit within/over/configurable
 - [ ] 4.7 Document the default-off posture in `README.md`, `docs/`, and `CHANGELOG.md`; bump minor version
 
 ## 5. Phase 3 — Tool annotations

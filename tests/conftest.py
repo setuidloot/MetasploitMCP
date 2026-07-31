@@ -10,6 +10,13 @@ from unittest.mock import Mock, patch
 
 from tests import MockMsfRpcError
 
+# Enable dangerous actions and disable rate limiting for the test suite BEFORE
+# server.py is imported, so the many tests that exercise state-changing tools
+# (run_exploit, start_listener, etc.) are not blocked by the default-off safety
+# gate. Dedicated tests in test_safety_controls.py toggle these explicitly.
+os.environ.setdefault("MSF_MCP_ALLOW_DANGEROUS", "true")
+os.environ.setdefault("MSF_MCP_RATE_LIMIT", "0")
+
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(__file__))
 

@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import base64
+import collections
 import contextlib
+import functools
 import inspect
 import ipaddress
 import logging
@@ -13,6 +15,7 @@ import socket
 import psutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -379,6 +382,96 @@ MODULE_RESULT_POLL_TIMEOUT = 300  # Max time to wait for auxiliary/post module c
 MODULE_RESULT_POLL_INTERVAL = 2  # How often to check module.running_stats
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
 MAX_TOOL_TIMEOUT_SECONDS = 120  # Maximum timeout allowed for tool parameters (cap at 120s)
+
+# ---------------------------------------------------------------------------
+# Safety controls (default-off dangerous actions + rate limiting)
+#
+# State-changing / offensive tools (exploit execution, payload delivery,
+# session control, listener/job control) are treated as "dangerous actions"
+# and are DISABLED by default. Operators opt in explicitly. This mirrors the
+# default-safe posture of the official Rapid7 MCP server.
+# ---------------------------------------------------------------------------
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+# Read from environment at import; can be overridden by configure_safety() (CLI).
+DANGEROUS_ACTIONS_ENABLED = _env_flag("MSF_MCP_ALLOW_DANGEROUS", False)
+try:
+    RATE_LIMIT_PER_MIN = int(os.environ.get("MSF_MCP_RATE_LIMIT", "60") or 0)
+except ValueError:
+    RATE_LIMIT_PER_MIN = 60
+
+_RATE_WINDOW_SECONDS = 60.0
+_rate_events: "collections.deque[float]" = collections.deque()
+
+
+def configure_safety(
+    allow_dangerous: Optional[bool] = None, rate_limit_per_min: Optional[int] = None
+) -> None:
+    """Set the safety posture (called from the CLI in __init__.py)."""
+    global DANGEROUS_ACTIONS_ENABLED, RATE_LIMIT_PER_MIN
+    if allow_dangerous is not None:
+        DANGEROUS_ACTIONS_ENABLED = allow_dangerous
+    if rate_limit_per_min is not None:
+        RATE_LIMIT_PER_MIN = rate_limit_per_min
+
+
+def _rate_limit_retry_after() -> Optional[float]:
+    """Return None if a request is allowed, else seconds until a slot frees up.
+
+    Global sliding-window limiter. ``RATE_LIMIT_PER_MIN <= 0`` disables limiting.
+    (Global rather than truly per-client: stdio has a single client, and the
+    HTTP transport does not surface a stable per-caller identity here.)
+    """
+    limit = RATE_LIMIT_PER_MIN
+    if not limit or limit <= 0:
+        return None
+    now = time.monotonic()
+    while _rate_events and now - _rate_events[0] > _RATE_WINDOW_SECONDS:
+        _rate_events.popleft()
+    if len(_rate_events) >= limit:
+        return round(_RATE_WINDOW_SECONDS - (now - _rate_events[0]), 1)
+    _rate_events.append(now)
+    return None
+
+
+def dangerous_tool(func):
+    """Decorator gating a state-changing tool behind the dangerous-actions flag
+    and the rate limiter. Returns a structured error instead of running when
+    blocked. Apply BELOW ``@mcp.tool()`` so FastMCP still sees the real
+    signature (``functools.wraps`` preserves it).
+    """
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        if not DANGEROUS_ACTIONS_ENABLED:
+            return {
+                "status": "error",
+                "error": "dangerous_actions_disabled",
+                "message": (
+                    f"'{func.__name__}' performs a state-changing/offensive action and is "
+                    "disabled by default. Enable it with the --allow-dangerous flag or "
+                    "MSF_MCP_ALLOW_DANGEROUS=true."
+                ),
+            }
+        retry_after = _rate_limit_retry_after()
+        if retry_after is not None:
+            return {
+                "status": "error",
+                "error": "rate_limited",
+                "message": (
+                    f"Rate limit of {RATE_LIMIT_PER_MIN} requests/min exceeded. "
+                    f"Retry in ~{retry_after}s."
+                ),
+                "retry_after_seconds": retry_after,
+            }
+        return await func(*args, **kwargs)
+
+    return wrapper
+
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(
@@ -3331,6 +3424,7 @@ async def list_payloads(
 
 
 @mcp.tool()
+@dangerous_tool
 async def generate_payload(
     payload: str,
     format: str,
@@ -3677,6 +3771,7 @@ async def generate_payload(
 
 
 @mcp.tool()
+@dangerous_tool
 async def run_exploit(
     module: str,
     options: Union[Dict[str, Any], str],
@@ -4044,6 +4139,7 @@ async def run_exploit(
 
 
 @mcp.tool()
+@dangerous_tool
 async def run_post_module(
     module: str,
     session_id: int,
@@ -4172,6 +4268,7 @@ async def run_post_module(
 
 
 @mcp.tool()
+@dangerous_tool
 async def run_auxiliary_module(
     module: str,
     options: Union[Dict[str, Any], str],
@@ -4871,7 +4968,200 @@ async def list_loot(workspace: Optional[str] = None, host: Optional[str] = None)
     return await _db_intel("db.loots", "loots", workspace, addresses=[host] if host else None)
 
 
+def _map_check_code(code: str) -> str:
+    """Map a Metasploit check ``code`` to a coarse, structured check state."""
+    code = (code or "").lower()
+    if code in ("vulnerable", "appears", "detected"):
+        return "vulnerable"
+    if code == "safe":
+        return "safe"
+    if code == "unsupported":
+        return "unsupported"
+    return "unknown"
+
+
 @mcp.tool()
+async def check_vulnerability(
+    module: str,
+    options: Union[Dict[str, Any], str],
+    module_type: str = "exploit",
+    timeout_seconds: int = 60,
+    ctx: Optional[Context] = None,
+) -> Dict[str, Any]:
+    """Run a module's non-destructive ``check`` against a target (no exploitation).
+
+    Runs Metasploit's ``check`` method only — it never fires the exploit, delivers
+    a payload, or opens a session. Use it to assess whether a target appears
+    vulnerable before deciding to run an exploit.
+
+    Args:
+        module: Module name/path (e.g. 'windows/smb/ms17_010_eternalblue').
+        options: Module options (dict or "K=V,K=V" string). Must include the
+            target (e.g. RHOSTS).
+        module_type: Module type; almost always 'exploit' (also 'auxiliary').
+        timeout_seconds: Max seconds to wait for the check result (capped at 120).
+
+    Returns:
+        Dict with check_state (vulnerable/safe/unsupported/unknown), the raw
+        check code and message, and session_created=False.
+    """
+    timeout_seconds = min(timeout_seconds, MAX_TOOL_TIMEOUT_SECONDS)
+    try:
+        client = get_msf_client()
+    except ConnectionError as e:
+        return {"status": "error", "error": "not_initialized", "message": str(e)}
+
+    try:
+        module_obj = await _get_module_object(module_type, module)
+    except InvalidModuleError as e:
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        return {"status": "error", "message": f"Error loading module '{module}': {e}"}
+
+    module_fullname = getattr(module_obj, "fullname", f"{module_type}/{module}")
+
+    try:
+        module_options = _parse_options_gracefully(options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid options format: {e}"}
+
+    # _set_module_options applies the control-character injection guard and
+    # reports missing/invalid options with a clear error.
+    try:
+        await _set_module_options(module_obj, module_options, module_type=module_type)
+    except ValueError as e:
+        return {"status": "error", "error": "invalid_options", "message": str(e)}
+
+    # module_obj.check() runs ONLY the check method (RPC module.check). For
+    # exploit modules pymetasploit3 sets DisablePayloadHandler, so no payload is
+    # delivered and no session is created — this path cannot fire the exploit.
+    try:
+        check_start = await asyncio.to_thread(lambda: module_obj.check())
+    except MsfRpcError as e:
+        return {"status": "error", "error": "rpc_error", "message": f"Check failed to start: {e}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Check failed to start: {e}"}
+
+    check_start = _decode_rpc(check_start)
+    if isinstance(check_start, dict) and check_start.get("error"):
+        return {
+            "status": "error",
+            "error": "check_failed",
+            "message": check_start.get("error_message")
+            or check_start.get("error_string")
+            or "Check could not be started.",
+        }
+    uuid = check_start.get("uuid") if isinstance(check_start, dict) else None
+    if not uuid:
+        return {
+            "status": "error",
+            "error": "unsupported",
+            "message": f"Module '{module_fullname}' did not return a check job (check may be unsupported).",
+        }
+
+    # Poll module.results[uuid] until the check completes.
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout_seconds
+    while loop.time() < deadline:
+        res = _decode_rpc(
+            await asyncio.to_thread(lambda: client.call("module.results", [str(uuid)]))
+        )
+        state = str(res.get("status", "")).lower() if isinstance(res, dict) else ""
+        if state in ("completed", "complete"):
+            result = res.get("result") if isinstance(res.get("result"), dict) else {}
+            code = str(result.get("code", res.get("code", "")))
+            return {
+                "status": "success",
+                "module": module_fullname,
+                "check_state": _map_check_code(code),
+                "code": code or "unknown",
+                "message": result.get("message") or res.get("message") or "",
+                "session_created": False,
+            }
+        if state in ("errored", "error", "failed"):
+            return {
+                "status": "error",
+                "error": "check_failed",
+                "module": module_fullname,
+                "message": res.get("error") or "Check reported an error.",
+            }
+        await asyncio.sleep(0.5)
+
+    return {
+        "status": "timeout",
+        "module": module_fullname,
+        "message": f"Check did not complete within {timeout_seconds}s.",
+        "execution_id": str(uuid),
+    }
+
+
+@mcp.tool()
+async def get_module_results(execution_id: str) -> Dict[str, Any]:
+    """Retrieve results/status for an asynchronously launched module execution.
+
+    Pass the ``uuid`` returned by a module-executing tool (run_exploit,
+    run_auxiliary_module, run_post_module, check_vulnerability) to poll its
+    accumulated output and completion status.
+
+    Args:
+        execution_id: The execution/job UUID returned at launch time.
+
+    Returns:
+        Dict with execution_status (completed / running / errored) and the
+        collected result, or a structured not-found error for an unknown id.
+    """
+    if not execution_id:
+        return {"status": "error", "error": "not_found", "message": "No execution id provided."}
+    try:
+        client = get_msf_client()
+    except ConnectionError as e:
+        return {"status": "error", "error": "not_initialized", "message": str(e)}
+
+    try:
+        res = _decode_rpc(
+            await asyncio.wait_for(
+                asyncio.to_thread(lambda: client.call("module.results", [str(execution_id)])),
+                timeout=RPC_CALL_TIMEOUT,
+            )
+        )
+    except asyncio.TimeoutError:
+        return {"status": "error", "error": "timeout", "message": "RPC did not respond in time."}
+    except MsfRpcError as e:
+        return {"status": "error", "error": "rpc_error", "message": f"Metasploit RPC error: {e}"}
+
+    if not isinstance(res, dict) or not res:
+        return {
+            "status": "error",
+            "error": "not_found",
+            "message": f"No results found for execution id '{execution_id}'.",
+        }
+
+    state = str(res.get("status", "")).lower()
+    if state in ("completed", "complete"):
+        return {
+            "status": "success",
+            "execution_id": execution_id,
+            "execution_status": "completed",
+            "result": res.get("result"),
+        }
+    if state in ("errored", "error", "failed"):
+        return {
+            "status": "success",
+            "execution_id": execution_id,
+            "execution_status": "errored",
+            "error": res.get("error") or res.get("error_message"),
+        }
+    # Anything else (typically "running") — return whatever partial data exists.
+    return {
+        "status": "success",
+        "execution_id": execution_id,
+        "execution_status": state or "running",
+        "result": res.get("result"),
+    }
+
+
+@mcp.tool()
+@dangerous_tool
 async def send_session_command(
     session_id: int,
     command: str,
@@ -5340,6 +5630,7 @@ async def list_listeners() -> Dict[str, Any]:
 
 
 @mcp.tool()
+@dangerous_tool
 async def start_listener(
     payload: str,
     lhost: str,
@@ -5512,6 +5803,7 @@ async def start_listener(
 
 
 @mcp.tool()
+@dangerous_tool
 async def stop_job(job_id: int) -> Dict[str, Any]:
     """
     Stop a running Metasploit job (handler or other). Verifies disappearance.
@@ -5573,6 +5865,7 @@ async def stop_job(job_id: int) -> Dict[str, Any]:
 
 
 @mcp.tool()
+@dangerous_tool
 async def kill_all_handler_jobs() -> Dict[str, Any]:
     """
     Kill all active handler jobs (exploit/multi/handler).
@@ -5674,6 +5967,7 @@ async def kill_all_handler_jobs() -> Dict[str, Any]:
 
 
 @mcp.tool()
+@dangerous_tool
 async def terminate_session(session_id: int, kill_associated_job: bool = True) -> Dict[str, Any]:
     """
     Forcefully terminate a Metasploit session using the session.stop() method.
@@ -5860,6 +6154,10 @@ async def health_check() -> Dict[str, Any]:
             "status": "ok",
             "msf_version": msf_version,
             "database_connected": database_connected,
+            "safety": {
+                "dangerous_actions_enabled": DANGEROUS_ACTIONS_ENABLED,
+                "rate_limit_per_min": RATE_LIMIT_PER_MIN,
+            },
         }
     except asyncio.TimeoutError:
         error_msg = (

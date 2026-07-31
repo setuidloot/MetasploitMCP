@@ -82,7 +82,46 @@ def main():
         action="store_true",
         help="Force finding an available port starting from --port or 8085",
     )
+    parser.add_argument(
+        "--allow-dangerous",
+        action="store_true",
+        default=None,
+        help=(
+            "Enable state-changing / offensive tools (exploit & module execution, "
+            "payload generation, session control, listeners). Disabled by default. "
+            "Can also be set with MSF_MCP_ALLOW_DANGEROUS=true."
+        ),
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Max dangerous-tool requests per minute (0 disables the limit). "
+            "Default 60; can also be set with MSF_MCP_RATE_LIMIT."
+        ),
+    )
     args = parser.parse_args()
+
+    # Apply the safety posture (CLI overrides environment). Dangerous actions stay
+    # disabled unless explicitly enabled here or via MSF_MCP_ALLOW_DANGEROUS.
+    from .server import configure_safety
+
+    configure_safety(
+        allow_dangerous=True if args.allow_dangerous else None,
+        rate_limit_per_min=args.rate_limit,
+    )
+    if args.allow_dangerous:
+        logger.warning(
+            "Dangerous actions ENABLED: exploit/module execution, payload generation, "
+            "and session/listener control are permitted."
+        )
+    else:
+        logger.info(
+            "Dangerous actions disabled (default). Read-only tools only; pass "
+            "--allow-dangerous to enable offensive tools."
+        )
 
     if args.transport == "stdio":
         logger.info("Starting MCP server in STDIO transport mode.")
