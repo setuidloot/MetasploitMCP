@@ -1,13 +1,13 @@
 ## 1. Phase 1 — Database intelligence tools (parity, additive)
 
-- [ ] 1.1 Add `db.*` RPC access helpers in `instance_manager.py` (workspace resolution + "database attached?" probe)
-- [ ] 1.2 Implement `list_hosts` tool (optional `workspace`; returns address/hostname/os/status)
-- [ ] 1.3 Implement `list_services` tool (filters: host, port, proto)
-- [ ] 1.4 Implement `list_vulnerabilities` tool (include references/CVE when present)
-- [ ] 1.5 Implement `list_notes`, `list_credentials`, `list_loot` tools
-- [ ] 1.6 Return structured "database unavailable" error when no DB is attached (all six tools)
-- [ ] 1.7 Surface database-connection status in `health_check`
-- [ ] 1.8 Add unit tests for each intel tool incl. degraded (no-DB) path and workspace scoping
+- [x] 1.1 Add `db.*` RPC access helpers in `server.py` (`_db_connected` probe + `_db_intel` shared helper with workspace scoping + `_decode_rpc` msgpack normalization)
+- [x] 1.2 Implement `list_hosts` tool (optional `workspace`; returns address/hostname/os/status)
+- [x] 1.3 Implement `list_services` tool (filters: host, port, proto)
+- [x] 1.4 Implement `list_vulnerabilities` tool (include references/CVE when present)
+- [x] 1.5 Implement `list_notes`, `list_credentials`, `list_loot` tools
+- [x] 1.6 Return structured "database unavailable" error when no DB is attached (all six tools, via `_db_intel`)
+- [x] 1.7 Surface database-connection status in `health_check` (`database_connected` field)
+- [x] 1.8 Add unit tests for each intel tool incl. degraded (no-DB) path and workspace scoping (tests/test_db_intel.py)
 
 ## 2. Phase 1 — Module check tool
 

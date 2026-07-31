@@ -4672,6 +4672,205 @@ async def _drive_shell_command(
         }
 
 
+# ---------------------------------------------------------------------------
+# Metasploit workspace database (db.*) intelligence tools — read-only.
+# Parity with the official Rapid7 MCP: hosts / services / vulnerabilities /
+# notes / credentials / loot. Each is read-only and workspace-scoped, and each
+# degrades to a structured error (never raises) when no database is attached.
+# ---------------------------------------------------------------------------
+
+
+def _decode_rpc(obj: Any) -> Any:
+    """Recursively decode msgpack byte keys/values to ``str`` for JSON-friendly output."""
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {_decode_rpc(k): _decode_rpc(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_decode_rpc(v) for v in obj]
+    return obj
+
+
+async def _db_connected(client: Any) -> bool:
+    """Return True if a Metasploit database is attached to the RPC server.
+
+    ``db.status`` returns e.g. ``{"driver": "postgresql", "db": "msf"}`` when a
+    database is connected; the ``db`` key is absent/empty otherwise.
+    """
+    status = _decode_rpc(await asyncio.to_thread(lambda: client.call("db.status")))
+    return bool(isinstance(status, dict) and status.get("db"))
+
+
+async def _db_intel(
+    method: str, result_key: str, workspace: Optional[str] = None, **filters: Any
+) -> Dict[str, Any]:
+    """Shared read-only helper for ``db.*`` listing calls.
+
+    Returns a structured error (never raises) when the client is not initialized
+    or no database is attached, satisfying the degraded-mode requirement.
+    """
+    try:
+        client = get_msf_client()
+    except ConnectionError as e:
+        return {"status": "error", "error": "not_initialized", "message": str(e)}
+
+    try:
+        connected = await asyncio.wait_for(_db_connected(client), timeout=RPC_CALL_TIMEOUT)
+        if not connected:
+            return {
+                "status": "error",
+                "error": "database_unavailable",
+                "message": (
+                    "No Metasploit database is connected. Initialize one (msfdb init) and "
+                    "restart msfrpcd against it to use workspace intelligence tools."
+                ),
+            }
+
+        opts: Dict[str, Any] = {k: v for k, v in filters.items() if v is not None}
+        if workspace:
+            opts["workspace"] = workspace
+
+        raw = _decode_rpc(
+            await asyncio.wait_for(
+                asyncio.to_thread(lambda: client.call(method, [opts])),
+                timeout=RPC_CALL_TIMEOUT,
+            )
+        )
+        if isinstance(raw, dict):
+            items = raw.get(result_key, [])
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            items = []
+
+        return {
+            "status": "success",
+            "workspace": workspace or "default",
+            "count": len(items),
+            result_key: items,
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "error": "timeout",
+            "message": f"Metasploit RPC did not respond within {RPC_CALL_TIMEOUT}s.",
+        }
+    except MsfRpcError as e:
+        return {"status": "error", "error": "rpc_error", "message": f"Metasploit RPC error: {e}"}
+    except Exception as e:  # pragma: no cover - defensive
+        logger.exception(f"Unexpected error querying {method}")
+        return {"status": "error", "error": "error", "message": f"Unexpected error: {e}"}
+
+
+@mcp.tool()
+async def list_hosts(workspace: Optional[str] = None) -> Dict[str, Any]:
+    """List hosts recorded in the Metasploit workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name. Defaults to the current workspace.
+
+    Returns:
+        Dict with status, workspace, count, and a ``hosts`` list (address,
+        hostname, os, state, ...). Returns a structured error when no database
+        is attached.
+    """
+    return await _db_intel("db.hosts", "hosts", workspace)
+
+
+@mcp.tool()
+async def list_services(
+    workspace: Optional[str] = None,
+    host: Optional[str] = None,
+    ports: Optional[str] = None,
+    proto: Optional[str] = None,
+) -> Dict[str, Any]:
+    """List services recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+        ports: Optional port or port range filter (e.g. "445" or "1-1024").
+        proto: Optional protocol filter (e.g. "tcp", "udp").
+
+    Returns:
+        Dict with status, workspace, count, and a ``services`` list (host, port,
+        proto, name, state, info).
+    """
+    return await _db_intel(
+        "db.services",
+        "services",
+        workspace,
+        addresses=[host] if host else None,
+        ports=ports,
+        proto=proto,
+    )
+
+
+@mcp.tool()
+async def list_vulnerabilities(
+    workspace: Optional[str] = None, host: Optional[str] = None
+) -> Dict[str, Any]:
+    """List vulnerabilities recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+
+    Returns:
+        Dict with status, workspace, count, and a ``vulns`` list (host, name,
+        references such as CVE identifiers).
+    """
+    return await _db_intel("db.vulns", "vulns", workspace, addresses=[host] if host else None)
+
+
+@mcp.tool()
+async def list_notes(
+    workspace: Optional[str] = None, host: Optional[str] = None, ntype: Optional[str] = None
+) -> Dict[str, Any]:
+    """List notes recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+        ntype: Optional note type filter.
+
+    Returns:
+        Dict with status, workspace, count, and a ``notes`` list (host, type, data).
+    """
+    return await _db_intel(
+        "db.notes", "notes", workspace, addresses=[host] if host else None, ntype=ntype
+    )
+
+
+@mcp.tool()
+async def list_credentials(workspace: Optional[str] = None) -> Dict[str, Any]:
+    """List credentials recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+
+    Returns:
+        Dict with status, workspace, count, and a ``creds`` list (associated
+        host/service, public and private components).
+    """
+    return await _db_intel("db.creds", "creds", workspace)
+
+
+@mcp.tool()
+async def list_loot(workspace: Optional[str] = None, host: Optional[str] = None) -> Dict[str, Any]:
+    """List loot recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+
+    Returns:
+        Dict with status, workspace, count, and a ``loots`` list (host, type,
+        stored path/name).
+    """
+    return await _db_intel("db.loots", "loots", workspace, addresses=[host] if host else None)
+
+
 @mcp.tool()
 async def send_session_command(
     session_id: int,
@@ -5648,8 +5847,20 @@ async def health_check() -> Dict[str, Any]:
         msf_version = (
             version_info.get("version", "N/A") if isinstance(version_info, dict) else "N/A"
         )
+        # Report whether a database is attached so callers know if the workspace
+        # intelligence tools (list_hosts/services/vulns/...) are usable.
+        try:
+            database_connected = await asyncio.wait_for(
+                _db_connected(client), timeout=RPC_CALL_TIMEOUT
+            )
+        except Exception:  # pragma: no cover - db status is best-effort
+            database_connected = False
         logger.info(f"Health check successful. MSF Version: {msf_version}")
-        return {"status": "ok", "msf_version": msf_version}
+        return {
+            "status": "ok",
+            "msf_version": msf_version,
+            "database_connected": database_connected,
+        }
     except asyncio.TimeoutError:
         error_msg = (
             f"Health check timeout ({RPC_CALL_TIMEOUT}s) - Metasploit server is not responding"
