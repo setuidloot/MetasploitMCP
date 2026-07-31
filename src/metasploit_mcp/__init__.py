@@ -102,6 +102,16 @@ def main():
             "Default 60; can also be set with MSF_MCP_RATE_LIMIT."
         ),
     )
+    parser.add_argument(
+        "--confirm-dangerous",
+        action="store_true",
+        default=None,
+        help=(
+            "Ask the client to confirm (via MCP elicitation) before each destructive "
+            "action. Falls back to the gate if the client can't elicit. Can also be "
+            "set with MSF_MCP_CONFIRM_DANGEROUS=true."
+        ),
+    )
     args = parser.parse_args()
 
     # Apply the safety posture (CLI overrides environment). Dangerous actions stay
@@ -111,6 +121,7 @@ def main():
     configure_safety(
         allow_dangerous=True if args.allow_dangerous else None,
         rate_limit_per_min=args.rate_limit,
+        require_confirmation=True if args.confirm_dangerous else None,
     )
     if args.allow_dangerous:
         logger.warning(

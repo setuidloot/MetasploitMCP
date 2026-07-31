@@ -41,17 +41,17 @@
 
 ## 6. Phase 3 — Structured output
 
-- [ ] 6.1 Define typed return models (Pydantic/TypedDict per FastMCP support) for intel, check, results, and existing tools
-- [ ] 6.2 Wire models into tool signatures so FastMCP emits output schemas + structured content
-- [ ] 6.3 Verify text-representation fallback remains for non-structured clients
-- [ ] 6.4 Tests: structured content validates against schema; text fallback present
+- [x] 6.1 Define typed return models (Pydantic/TypedDict per FastMCP support) for intel, check, results, and existing tools
+- [x] 6.2 Wire models into tool signatures so FastMCP emits output schemas + structured content
+- [x] 6.3 Verify text-representation fallback remains for non-structured clients
+- [x] 6.4 Tests: structured content validates against schema; text fallback present
 
 ## 7. Phase 3 — Documentation resources & elicitation
 
-- [ ] 7.1 Register module documentation as MCP resources / resource links
-- [ ] 7.2 Add best-effort `ctx.elicit` confirmation to destructive tools, with safety-gate fallback when unsupported
-- [ ] 7.3 Tests: confirm → proceeds, decline → cancelled result, no-elicitation client → gate fallback
-- [ ] 7.4 Tests: module documentation retrievable as a resource
+- [x] 7.1 Register module documentation as MCP resources / resource links
+- [x] 7.2 Add best-effort `ctx.elicit` confirmation to destructive tools, with safety-gate fallback when unsupported
+- [x] 7.3 Tests: confirm → proceeds, decline → cancelled result, no-elicitation client → gate fallback
+- [x] 7.4 Tests: module documentation retrievable as a resource
 
 ## 8. Phase 4 — FastMCP 3.x evaluation & dependency finalization
 

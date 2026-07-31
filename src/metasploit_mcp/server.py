@@ -399,6 +399,9 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 # Read from environment at import; can be overridden by configure_safety() (CLI).
 DANGEROUS_ACTIONS_ENABLED = _env_flag("MSF_MCP_ALLOW_DANGEROUS", False)
+# When enabled, destructive tools ask the client to confirm via MCP elicitation
+# before running (best-effort; falls back to the gate if the client can't elicit).
+CONFIRM_DANGEROUS = _env_flag("MSF_MCP_CONFIRM_DANGEROUS", False)
 try:
     RATE_LIMIT_PER_MIN = int(os.environ.get("MSF_MCP_RATE_LIMIT", "60") or 0)
 except ValueError:
@@ -409,14 +412,18 @@ _rate_events: "collections.deque[float]" = collections.deque()
 
 
 def configure_safety(
-    allow_dangerous: Optional[bool] = None, rate_limit_per_min: Optional[int] = None
+    allow_dangerous: Optional[bool] = None,
+    rate_limit_per_min: Optional[int] = None,
+    require_confirmation: Optional[bool] = None,
 ) -> None:
     """Set the safety posture (called from the CLI in __init__.py)."""
-    global DANGEROUS_ACTIONS_ENABLED, RATE_LIMIT_PER_MIN
+    global DANGEROUS_ACTIONS_ENABLED, RATE_LIMIT_PER_MIN, CONFIRM_DANGEROUS
     if allow_dangerous is not None:
         DANGEROUS_ACTIONS_ENABLED = allow_dangerous
     if rate_limit_per_min is not None:
         RATE_LIMIT_PER_MIN = rate_limit_per_min
+    if require_confirmation is not None:
+        CONFIRM_DANGEROUS = require_confirmation
 
 
 def _rate_limit_retry_after() -> Optional[float]:
@@ -438,11 +445,40 @@ def _rate_limit_retry_after() -> Optional[float]:
     return None
 
 
+async def _confirm_dangerous(ctx: Any, tool_name: str) -> bool:
+    """Best-effort user confirmation for a destructive action via MCP elicitation.
+
+    Returns True to proceed, False if the user explicitly declined/cancelled.
+    When confirmation is disabled, or the client does not support elicitation,
+    this returns True and the (already-passed) safety gate remains the control.
+    """
+    if not CONFIRM_DANGEROUS:
+        return True
+    elicit = getattr(ctx, "elicit", None) if ctx is not None else None
+    if not callable(elicit):
+        # Client/context cannot elicit — fall back to the gate (proceed).
+        return True
+    try:
+        result = await elicit(
+            message=f"Confirm running '{tool_name}'? This performs a state-changing/offensive action.",
+            response_type=None,
+        )
+    except Exception as e:  # elicitation unsupported at runtime -> gate fallback
+        logger.debug(f"Elicitation unavailable for {tool_name}, proceeding via gate: {e}")
+        return True
+    action = type(result).__name__
+    if action == "AcceptedElicitation":
+        return True
+    # DeclinedElicitation / CancelledElicitation (or anything non-accepting)
+    return False
+
+
 def dangerous_tool(func):
-    """Decorator gating a state-changing tool behind the dangerous-actions flag
-    and the rate limiter. Returns a structured error instead of running when
-    blocked. Apply BELOW ``@annotated_tool`` so FastMCP still sees the real
-    signature (``functools.wraps`` preserves it).
+    """Decorator gating a state-changing tool behind the dangerous-actions flag,
+    the rate limiter, and (optionally) elicitation confirmation. Returns a
+    structured error instead of running when blocked. Apply BELOW
+    ``@annotated_tool`` so FastMCP still sees the real signature
+    (``functools.wraps`` preserves it).
     """
 
     @functools.wraps(func)
@@ -467,6 +503,12 @@ def dangerous_tool(func):
                     f"Retry in ~{retry_after}s."
                 ),
                 "retry_after_seconds": retry_after,
+            }
+        if not await _confirm_dangerous(kwargs.get("ctx"), func.__name__):
+            return {
+                "status": "cancelled",
+                "error": "cancelled_by_user",
+                "message": f"'{func.__name__}' was cancelled: user declined confirmation.",
             }
         return await func(*args, **kwargs)
 
@@ -6237,6 +6279,51 @@ async def health_check() -> Dict[str, Any]:
     except Exception as e:
         logger.exception("Unexpected error during health check.")
         return {"status": "error", "message": f"Internal Server Error during health check: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# MCP resources — expose server info and module documentation as readable
+# resources (in addition to the equivalent tools).
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("msf://server/info")
+async def server_info_resource() -> Dict[str, Any]:
+    """Server identity, safety posture, and the tool behavior taxonomy."""
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        pkg_version = _pkg_version("metasploit-mcp")
+    except Exception:
+        pkg_version = "unknown"
+    return {
+        "name": "MetasploitMCP",
+        "unofficial": True,
+        "affiliated_with_rapid7": False,
+        "version": pkg_version,
+        "safety": {
+            "dangerous_actions_enabled": DANGEROUS_ACTIONS_ENABLED,
+            "confirm_dangerous": CONFIRM_DANGEROUS,
+            "rate_limit_per_min": RATE_LIMIT_PER_MIN,
+        },
+        "tool_annotations": TOOL_ANNOTATIONS,
+    }
+
+
+@mcp.resource("msf://module/{module}")
+async def module_doc_resource(module: str) -> Dict[str, Any]:
+    """Documentation for a module, addressable as a resource.
+
+    ``module`` is the full module path with the type as the first segment, e.g.
+    ``exploit/windows/smb/ms17_010_eternalblue``. Clients that cannot place
+    slashes in a single URI segment should percent-encode them (``%2F``).
+    """
+    module = (module or "").strip()
+    if "/" not in module:
+        return {"status": "error", "message": f"Expected '<type>/<path>', got '{module}'."}
+    module_type, module_name = module.split("/", 1)
+    # Reuse the module documentation tool (read-only, ungated).
+    return await get_module_documentation(f"{module_type}/{module_name}")
 
 
 # HTTP Health Check Endpoint
