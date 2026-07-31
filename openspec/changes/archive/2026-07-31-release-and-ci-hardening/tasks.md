@@ -10,7 +10,7 @@
 - [x] 2.2 Add a `quality` job: `black --check` (blocking) over `src` and `tests`
 - [x] 2.3 Add `mypy` to the `quality` job for `src/metasploit_mcp` (non-blocking / advisory initially per design D4 — 27 pre-existing errors)
 - [x] 2.4 Add a `sbom-check` job (or step) running `scripts/generate_sbom.py --check`
-- [ ] 2.5 Verify all new jobs run green on this branch's PR (each step verified locally; actual PR run pending push)
+- [x] 2.5 Verify all new jobs run green on this branch's PR (confirmed green on PRs #17/#18 and on main)
 
 ## 3. SBOM-on-release (release.yml)
 
@@ -27,6 +27,6 @@
 ## 5. Verification & follow-up
 
 - [x] 5.1 Run `openspec validate release-and-ci-hardening` (valid)
-- [ ] 5.2 Dry-run a release on a throwaway tag (or `workflow_dispatch`) to confirm SBOM attaches and PyPI/GH-release steps still pass (requires push; build/twine/sbom steps verified locally)
-- [ ] 5.3 (Follow-up) Once the baseline is clean, flip `mypy` to blocking (27 errors in 4 files as of now)
-- [ ] 5.4 Archive the change once shipped
+- [x] 5.2 Dry-run a release: satisfied by the real v3.0.1 release — SBOM attached to the GitHub Release and PyPI publish succeeded
+- [ ] 5.3 (Deferred follow-up) Once the mypy baseline is clean, flip `mypy` to blocking (27 errors in 4 files at ship time)
+- [x] 5.4 Archive the change once shipped
