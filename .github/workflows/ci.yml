@@ -6,6 +6,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     name: tests (py${{ matrix.python-version }})
@@ -33,3 +36,82 @@ jobs:
 
       - name: Run test suite
         run: poetry run pytest
+
+  quality:
+    name: quality (lint + types)
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: python -m pip install --upgrade pip poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      - name: Check formatting (black)
+        run: poetry run black --check src tests
+
+      # mypy is advisory for now: there is a pre-existing type-error backlog.
+      # Tracked to become blocking once the baseline is clean (see
+      # openspec/changes/release-and-ci-hardening/tasks.md task 5.3).
+      - name: Type check (mypy, advisory)
+        continue-on-error: true
+        run: poetry run mypy src
+
+  sbom-check:
+    name: sbom freshness
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The generator is stdlib-only (tomllib on 3.11+); no dependency install needed.
+      - name: Verify sbom.json matches poetry.lock
+        run: python scripts/generate_sbom.py --check
+
+  build:
+    name: build distribution
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: python -m pip install --upgrade pip poetry
+
+      - name: Build sdist and wheel
+        run: poetry build
+
+      - name: Check distribution metadata
+        run: |
+          python -m pip install twine
+          twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

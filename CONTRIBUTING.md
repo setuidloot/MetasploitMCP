@@ -108,7 +108,9 @@ Before creating an issue, please:
 
 #### PR Requirements
 
-- [ ] All tests pass
+- [ ] All tests pass (`poetry run pytest`)
+- [ ] Code is formatted (`make format`, or CI's `black --check` will fail)
+- [ ] SBOM is in sync if dependencies changed (`make sbom` then commit; CI's SBOM freshness check will fail otherwise)
 - [ ] New functionality has tests
 - [ ] Documentation updated (if applicable)
 - [ ] CHANGELOG.md updated
@@ -120,10 +122,12 @@ Before creating an issue, please:
 ### Code Style
 
 - **Follow PEP 8** Python style guidelines
-- **Use type hints** where appropriate
+- **Format with black** — run `make format` before committing (CI enforces `black --check`)
+- **Use type hints** where appropriate (`make type-check` runs `mypy`; currently advisory in CI)
 - **Write docstrings** for public functions and classes
 - **Keep functions focused** and reasonably sized
 - **Use meaningful names** for variables and functions
+- **Regenerate the SBOM** after any dependency change — `make sbom` (CI's SBOM freshness check enforces this)
 
 ### Testing
 

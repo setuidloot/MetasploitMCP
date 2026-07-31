@@ -10,10 +10,16 @@ any dependency change with::
 
 The project version is read from ``pyproject.toml`` so the SBOM's root component
 stays in sync with releases.
+
+Pass ``--check`` to verify the committed ``sbom.json`` is up to date without
+writing it (used by CI and the release build)::
+
+    poetry run python scripts/generate_sbom.py --check
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
@@ -75,9 +81,7 @@ def build_sbom() -> dict:
         components.append(component)
         root_deps.append(purl)
 
-    dependencies.append(
-        {"ref": _bom_ref(root_name, root_version), "dependsOn": sorted(root_deps)}
-    )
+    dependencies.append({"ref": _bom_ref(root_name, root_version), "dependsOn": sorted(root_deps)})
 
     # Deterministic serial number derived from the locked content so re-running
     # on an unchanged lock yields an identical SBOM (no wall-clock timestamp).
@@ -106,12 +110,46 @@ def build_sbom() -> dict:
     }
 
 
-def main() -> int:
+def serialize(sbom: dict) -> str:
+    """Render the SBOM to the exact on-disk representation (single source of truth)."""
+    return json.dumps(sbom, indent=2) + "\n"
+
+
+def _display(path: Path) -> str:
+    """Path relative to the repo root when possible, else the full path."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify sbom.json is up to date without writing; exit non-zero if stale.",
+    )
+    args = parser.parse_args(argv)
+
     sbom = build_sbom()
-    OUTPUT_PATH.write_text(json.dumps(sbom, indent=2) + "\n")
+    rendered = serialize(sbom)
+
+    if args.check:
+        current = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else ""
+        if current != rendered:
+            print(
+                f"::error::{_display(OUTPUT_PATH)} is out of date with "
+                f"poetry.lock. Regenerate it with `make sbom` and commit the result.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{_display(OUTPUT_PATH)} is up to date with poetry.lock")
+        return 0
+
+    OUTPUT_PATH.write_text(rendered)
     print(
-        f"Wrote {OUTPUT_PATH.relative_to(ROOT)} "
-        f"({len(sbom['components'])} components) from poetry.lock"
+        f"Wrote {_display(OUTPUT_PATH)} " f"({len(sbom['components'])} components) from poetry.lock"
     )
     return 0
 
