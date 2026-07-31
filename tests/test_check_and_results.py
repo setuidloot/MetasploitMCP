@@ -23,16 +23,18 @@ get_module_results = unwrap_tool(server.get_module_results)
 
 
 class FakeModule:
+    """Mimics a pymetasploit3 module object.
+
+    Note: `.check` is a BOOL (does the module implement check?), not the method.
+    """
+
     fullname = "exploit/windows/smb/ms17_010_eternalblue"
+    moduletype = "exploit"
+    modulename = "windows/smb/ms17_010_eternalblue"
 
-    def __init__(self, check_return=None):
-        self._check_return = (
-            check_return if check_return is not None else {"uuid": "u1", "job_id": 1}
-        )
+    def __init__(self, supports_check=True):
+        self.check = supports_check  # bool attribute, matching pymetasploit3
         self.executed = False
-
-    def check(self):
-        return self._check_return
 
     def execute(self, **kwargs):  # must never be called by check_vulnerability
         self.executed = True
@@ -40,15 +42,17 @@ class FakeModule:
 
 
 class FakeClient:
-    def __init__(self, results_by_uuid=None):
+    def __init__(self, check_start=None, results_by_uuid=None):
+        self.check_start = check_start if check_start is not None else {"uuid": "u1", "job_id": 1}
         self.results_by_uuid = results_by_uuid or {}
         self.calls = []
 
     def call(self, method, args=None):
         self.calls.append((method, args))
+        if method == "module.check":
+            return self.check_start
         if method == "module.results":
-            uuid = args[0]
-            return self.results_by_uuid.get(uuid, {})
+            return self.results_by_uuid.get(args[0], {})
         return {}
 
 
@@ -72,7 +76,13 @@ class TestCheckVulnerability:
     async def test_vulnerable(self, monkeypatch):
         module = FakeModule()
         client = FakeClient(
-            {"u1": {"status": "completed", "result": {"code": "vulnerable", "message": "MS17-010"}}}
+            check_start={"uuid": "u1"},
+            results_by_uuid={
+                "u1": {
+                    "status": "completed",
+                    "result": {"code": "vulnerable", "message": "MS17-010"},
+                }
+            },
         )
         _wire(monkeypatch, module, client)
         result = await check_vulnerability(
@@ -85,14 +95,27 @@ class TestCheckVulnerability:
 
     async def test_safe(self, monkeypatch):
         module = FakeModule()
-        client = FakeClient({"u1": {"status": "completed", "result": {"code": "safe"}}})
+        client = FakeClient(
+            check_start={"uuid": "u1"},
+            results_by_uuid={"u1": {"status": "completed", "result": {"code": "safe"}}},
+        )
         _wire(monkeypatch, module, client)
         result = await check_vulnerability("exploit/x", {"RHOSTS": "10.0.0.1"})
         assert result["check_state"] == "safe"
 
-    async def test_unsupported_when_no_uuid(self, monkeypatch):
-        module = FakeModule(check_return={"job_id": 1})  # no uuid -> check unsupported
+    async def test_unsupported_when_module_lacks_check(self, monkeypatch):
+        module = FakeModule(supports_check=False)  # .check == False
         client = FakeClient()
+        _wire(monkeypatch, module, client)
+        result = await check_vulnerability("exploit/x", {"RHOSTS": "10.0.0.1"})
+        assert result["status"] == "error"
+        assert result["error"] == "unsupported"
+        # Must not have issued the check RPC.
+        assert all(m != "module.check" for m, _ in client.calls)
+
+    async def test_unsupported_when_no_uuid(self, monkeypatch):
+        module = FakeModule()
+        client = FakeClient(check_start={"job_id": 1})  # RPC returned no uuid
         _wire(monkeypatch, module, client)
         result = await check_vulnerability("exploit/x", {"RHOSTS": "10.0.0.1"})
         assert result["status"] == "error"
@@ -113,7 +136,10 @@ class TestCheckVulnerability:
 
     async def test_check_never_executes_exploit(self, monkeypatch):
         module = FakeModule()
-        client = FakeClient({"u1": {"status": "completed", "result": {"code": "appears"}}})
+        client = FakeClient(
+            check_start={"uuid": "u1"},
+            results_by_uuid={"u1": {"status": "completed", "result": {"code": "appears"}}},
+        )
         _wire(monkeypatch, module, client)
         await check_vulnerability("exploit/x", {"RHOSTS": "10.0.0.1"})
         # No module.execute call, and no exploit execution occurred.
@@ -124,7 +150,9 @@ class TestCheckVulnerability:
 @pytest.mark.unit
 class TestGetModuleResults:
     async def test_completed(self, monkeypatch):
-        client = FakeClient({"abc": {"status": "completed", "result": {"output": "done"}}})
+        client = FakeClient(
+            results_by_uuid={"abc": {"status": "completed", "result": {"output": "done"}}}
+        )
         monkeypatch.setattr(server, "get_msf_client", lambda: client)
         result = await get_module_results("abc")
         assert result["status"] == "success"
@@ -132,13 +160,13 @@ class TestGetModuleResults:
         assert result["result"] == {"output": "done"}
 
     async def test_running(self, monkeypatch):
-        client = FakeClient({"abc": {"status": "running"}})
+        client = FakeClient(results_by_uuid={"abc": {"status": "running"}})
         monkeypatch.setattr(server, "get_msf_client", lambda: client)
         result = await get_module_results("abc")
         assert result["execution_status"] == "running"
 
     async def test_unknown_id_not_found(self, monkeypatch):
-        client = FakeClient({})  # returns {} for unknown uuid
+        client = FakeClient(results_by_uuid={})  # returns {} for unknown uuid
         monkeypatch.setattr(server, "get_msf_client", lambda: client)
         result = await get_module_results("does-not-exist")
         assert result["status"] == "error"

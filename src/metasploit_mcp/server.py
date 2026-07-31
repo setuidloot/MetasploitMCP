@@ -5140,11 +5140,25 @@ async def check_vulnerability(
     except ValueError as e:
         return {"status": "error", "error": "invalid_options", "message": str(e)}
 
-    # module_obj.check() runs ONLY the check method (RPC module.check). For
-    # exploit modules pymetasploit3 sets DisablePayloadHandler, so no payload is
-    # delivered and no session is created — this path cannot fire the exploit.
+    # On pymetasploit3 module objects, `.check` is a BOOL indicating whether the
+    # module implements a check method (NOT the method itself). Use it to short
+    # -circuit unsupported modules before issuing the RPC.
+    supports_check = getattr(module_obj, "check", None)
+    if supports_check is False:
+        return {
+            "status": "error",
+            "error": "unsupported",
+            "message": f"Module '{module_fullname}' does not implement a check method.",
+        }
+
+    # Run ONLY the check via the RPC module.check method (module_type, name, opts).
+    # This never fires the exploit, delivers a payload, or opens a session.
+    mtype = getattr(module_obj, "moduletype", module_type)
+    mname = getattr(module_obj, "modulename", module)
     try:
-        check_start = await asyncio.to_thread(lambda: module_obj.check())
+        check_start = await asyncio.to_thread(
+            lambda: client.call("module.check", [mtype, mname, module_options])
+        )
     except MsfRpcError as e:
         return {"status": "error", "error": "rpc_error", "message": f"Check failed to start: {e}"}
     except Exception as e:
