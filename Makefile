@@ -1,6 +1,6 @@
 # Makefile for MetasploitMCP - Modern Poetry-based Development Workflow
 
-.PHONY: help install dev-install test test-unit test-integration test-coverage test-watch lint format type-check pre-commit clean build sbom publish dev-setup check ci docs serve-docs
+.PHONY: help install dev-install test test-unit test-integration test-coverage test-watch lint format type-check pre-commit clean build sbom sbom-check publish dev-setup check ci docs serve-docs
 
 # Colors for output
 BLUE := \033[36m
@@ -156,6 +156,11 @@ sbom: ## Build & Deploy: Regenerate the CycloneDX SBOM (sbom.json) from poetry.l
 	@echo "$(BLUE)Generating SBOM...$(RESET)"
 	poetry run python scripts/generate_sbom.py
 	@echo "$(GREEN)✓ sbom.json updated!$(RESET)"
+
+sbom-check: ## Build & Deploy: Verify sbom.json is in sync with poetry.lock (CI gate)
+	@echo "$(BLUE)Checking SBOM freshness...$(RESET)"
+	poetry run python scripts/generate_sbom.py --check
+	@echo "$(GREEN)✓ sbom.json is up to date!$(RESET)"
 
 publish-test: build ## Build & Deploy: Publish to test PyPI
 	@echo "$(BLUE)Publishing to test PyPI...$(RESET)"

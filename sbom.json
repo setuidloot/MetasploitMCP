@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:b914c798-0fb0-3c53-8d1a-6db56298d625",
+  "serialNumber": "urn:uuid:07f5a47d-3396-1492-524b-2bf9a9a7d02c",
   "version": 1,
   "metadata": {
     "component": {
@@ -9,7 +9,7 @@
       "bom-ref": "pkg:pypi/metasploit-mcp@3.0.0",
       "name": "metasploit-mcp",
       "version": "3.0.0",
-      "description": "Metasploit MCP Server - Provides core Metasploit functionality via the Model Context Protocol",
+      "description": "Unofficial Metasploit MCP Server (not affiliated with or endorsed by Rapid7) - provides Metasploit Framework functionality via the Model Context Protocol. A fork of GH05TCREW/MetasploitMCP.",
       "purl": "pkg:pypi/metasploit-mcp@3.0.0",
       "licenses": [
         {
@@ -944,10 +944,10 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:pypi/mcp@1.27.0",
+      "bom-ref": "pkg:pypi/mcp@1.29.0",
       "name": "mcp",
-      "version": "1.27.0",
-      "purl": "pkg:pypi/mcp@1.27.0",
+      "version": "1.29.0",
+      "purl": "pkg:pypi/mcp@1.29.0",
       "scope": "required",
       "properties": [
         {
@@ -1289,10 +1289,40 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:pypi/pydantic@2.13.4",
+      "name": "pydantic",
+      "version": "2.13.4",
+      "purl": "pkg:pypi/pydantic@2.13.4",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Data validation using Python type hints"
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:pypi/pydantic-core@2.33.2",
       "name": "pydantic-core",
       "version": "2.33.2",
       "purl": "pkg:pypi/pydantic-core@2.33.2",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "poetry:groups",
+          "value": "main,dev"
+        }
+      ],
+      "description": "Core functionality for Pydantic validation and serialization"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pydantic-core@2.46.4",
+      "name": "pydantic-core",
+      "version": "2.46.4",
+      "purl": "pkg:pypi/pydantic-core@2.46.4",
       "scope": "required",
       "properties": [
         {
@@ -2013,7 +2043,7 @@
         "pkg:pypi/langsmith@0.9.7",
         "pkg:pypi/markdown-it-py@4.0.0",
         "pkg:pypi/mccabe@0.7.0",
-        "pkg:pypi/mcp@1.27.0",
+        "pkg:pypi/mcp@1.29.0",
         "pkg:pypi/mdurl@0.1.2",
         "pkg:pypi/mock@5.2.0",
         "pkg:pypi/more-itertools@10.8.0",
@@ -2036,8 +2066,10 @@
         "pkg:pypi/pycodestyle@2.14.0",
         "pkg:pypi/pycparser@2.23",
         "pkg:pypi/pydantic-core@2.33.2",
+        "pkg:pypi/pydantic-core@2.46.4",
         "pkg:pypi/pydantic-settings@2.11.0",
         "pkg:pypi/pydantic@2.11.9",
+        "pkg:pypi/pydantic@2.13.4",
         "pkg:pypi/pyflakes@3.4.0",
         "pkg:pypi/pygments@2.20.0",
         "pkg:pypi/pyjwt@2.13.0",

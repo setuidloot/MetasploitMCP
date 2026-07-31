@@ -35,6 +35,12 @@ jobs:
             exit 1
           fi
 
+      # Fail fast if the committed SBOM has drifted from poetry.lock. Because the
+      # SBOM's root version is read from pyproject (verified == tag above), a
+      # passing check also guarantees the SBOM version matches the release tag.
+      - name: Verify SBOM is up to date
+        run: python scripts/generate_sbom.py --check
+
       - name: Build sdist and wheel
         run: poetry build
 
@@ -48,6 +54,14 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # Uploaded separately from `dist/` so the PyPI publish step (which uploads
+      # everything in the dist artifact) never sees a non-package file.
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
 
   pypi-publish:
     name: Publish to PyPI
@@ -83,8 +97,16 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*
+            sbom/sbom.json
           generate_release_notes: true
