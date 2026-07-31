@@ -23,7 +23,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session-id", type=int, required=True, help="Metasploit session ID")
     parser.add_argument("--command", required=True, help="Command to run")
     parser.add_argument("--timeout", type=int, default=30, help="Hard timeout seconds")
-    parser.add_argument("--inactivity-timeout", type=int, default=10, help="Inactivity timeout seconds")
+    parser.add_argument(
+        "--inactivity-timeout", type=int, default=10, help="Inactivity timeout seconds"
+    )
     parser.add_argument(
         "--output-jsonl",
         default="probe-session-channel.jsonl",
@@ -45,7 +47,9 @@ async def _get_session_object(session_id: int) -> Any:
     )
 
 
-async def _strategy_drive_shell(session: Any, session_id: int, command: str, timeout: int, inactivity: int) -> Dict[str, Any]:
+async def _strategy_drive_shell(
+    session: Any, session_id: int, command: str, timeout: int, inactivity: int
+) -> Dict[str, Any]:
     return await mcp_module._drive_shell_command(
         session=session,
         command=command,
@@ -65,9 +69,15 @@ async def _strategy_run_with_output(session: Any, command: str, timeout: int) ->
     return {"status": "success", "reason": "run_with_output", "output": output}
 
 
-async def _strategy_meterpreter_shell_helper(session: Any, command: str, timeout: int) -> Dict[str, Any]:
+async def _strategy_meterpreter_shell_helper(
+    session: Any, command: str, timeout: int
+) -> Dict[str, Any]:
     if not hasattr(session, "run_shell_cmd_with_output"):
-        return {"status": "unsupported", "reason": "missing_run_shell_cmd_with_output", "output": ""}
+        return {
+            "status": "unsupported",
+            "reason": "missing_run_shell_cmd_with_output",
+            "output": "",
+        }
     output = await asyncio.wait_for(
         asyncio.to_thread(lambda: session.run_shell_cmd_with_output(command, timeout=timeout)),
         timeout=timeout,
@@ -78,9 +88,17 @@ async def _strategy_meterpreter_shell_helper(session: Any, command: str, timeout
 async def _run_probe(args: argparse.Namespace) -> List[Dict[str, Any]]:
     session = await _get_session_object(args.session_id)
     strategies = [
-        ("drive_shell_loop", _strategy_drive_shell(session, args.session_id, args.command, args.timeout, args.inactivity_timeout)),
+        (
+            "drive_shell_loop",
+            _strategy_drive_shell(
+                session, args.session_id, args.command, args.timeout, args.inactivity_timeout
+            ),
+        ),
         ("run_with_output", _strategy_run_with_output(session, args.command, args.timeout)),
-        ("run_shell_cmd_with_output", _strategy_meterpreter_shell_helper(session, args.command, args.timeout)),
+        (
+            "run_shell_cmd_with_output",
+            _strategy_meterpreter_shell_helper(session, args.command, args.timeout),
+        ),
     ]
     rows: List[Dict[str, Any]] = []
     for strategy_name, coro in strategies:

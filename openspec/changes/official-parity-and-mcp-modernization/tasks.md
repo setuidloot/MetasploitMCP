@@ -31,7 +31,7 @@
 - [x] 4.4 Implement configurable per-client rate limiter with a safe default; reject over-limit with a structured error
 - [x] 4.5 Report safety posture (dangerous enabled?, active rate limit) in `health_check`
 - [x] 4.6 Tests: gate off blocks dangerous / allows read-only; gate on permits; rate-limit within/over/configurable
-- [ ] 4.7 Document the default-off posture in `README.md`, `docs/`, and `CHANGELOG.md`; bump minor version
+- [x] 4.7 Document the default-off posture in `README.md`, `docs/`, and `CHANGELOG.md`; bump minor version
 
 ## 5. Phase 3 — Tool annotations
 
@@ -62,6 +62,6 @@
 
 ## 9. Verification & wrap-up
 
-- [ ] 9.1 Run `openspec validate --change official-parity-and-mcp-modernization`
-- [ ] 9.2 Full test suite green; update README parity/feature matrix vs official server
+- [x] 9.1 Run `openspec validate --change official-parity-and-mcp-modernization`
+- [x] 9.2 Full test suite green; update README parity/feature matrix vs official server
 - [ ] 9.3 Archive the change with `/opsx:archive` (or `openspec archive`) once shipped and specs synced

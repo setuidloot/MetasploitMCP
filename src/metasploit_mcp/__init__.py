@@ -7,7 +7,7 @@ functionality through the MCP protocol.
 
 from .server import mcp, logger
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __all__ = ["main", "mcp", "logger", "__version__"]
 
 
