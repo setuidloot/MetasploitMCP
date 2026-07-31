@@ -27,10 +27,15 @@ An **unofficial**, modern, secure Model Context Protocol (MCP) server that provi
 - **Security Validation**: Built-in bind address validation and input sanitization
 
 ### Security Features
-- **Bind Address Validation**: Ensures listeners only bind to authorized interfaces
-- **Input Sanitization**: Comprehensive validation of all parameters
-- **Secure Defaults**: Listeners default to `0.0.0.0` binding for maximum compatibility
+- **Bind Address Validation**: Rejects bind addresses that are neither a wildcard nor an IP configured on the host
+- **Input Sanitization**: Comprehensive validation of all parameters, including rejection of control characters in module options (command-injection guard)
 - **Error Handling**: Prevents information leakage through proper error management
+
+> ⚠️ **Binding default is `0.0.0.0` (all interfaces) for compatibility, not security.**
+> Reverse-handler listeners default to binding all interfaces so payloads on remote
+> targets can connect back. This is intentional for offensive use but is **not** a
+> locked-down default — on a shared or untrusted network, restrict it by passing an
+> explicit `reverselistenerbindaddress` (e.g. a specific interface IP).
 
 ### Modern Development
 - **Poetry Dependency Management**: Modern Python packaging and dependency resolution
@@ -211,14 +216,18 @@ metasploit-mcp --transport http --host 0.0.0.0 --port 8085
 
 ### Security Features
 
-- **Bind Address Validation**: Prevents binding to unauthorized network interfaces
-- **Input Sanitization**: All parameters are validated before processing
-- **Secure Defaults**: Listeners default to `0.0.0.0` for maximum compatibility
+- **Bind Address Validation**: Rejects addresses that are neither a wildcard nor a host-configured IP
+- **Input Sanitization**: All parameters are validated before processing; control characters in module options are rejected (command-injection guard)
 - **Error Handling**: Prevents information disclosure through proper error management
+
+> ⚠️ **Listeners bind `0.0.0.0` (all interfaces) by default** — a compatibility choice for
+> catching reverse connections, **not** a hardened default. Pass an explicit
+> `reverselistenerbindaddress` to restrict the binding on shared/untrusted networks.
 
 ### Best Practices
 
 - Only use in authorized testing environments
+- Restrict listener bind addresses (`reverselistenerbindaddress`) when you don't need all interfaces
 - Validate all commands before execution
 - Monitor generated payloads and their usage
 - Use strong passwords for Metasploit RPC
