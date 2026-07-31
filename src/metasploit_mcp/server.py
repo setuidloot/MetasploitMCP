@@ -441,7 +441,7 @@ def _rate_limit_retry_after() -> Optional[float]:
 def dangerous_tool(func):
     """Decorator gating a state-changing tool behind the dangerous-actions flag
     and the rate limiter. Returns a structured error instead of running when
-    blocked. Apply BELOW ``@mcp.tool()`` so FastMCP still sees the real
+    blocked. Apply BELOW ``@annotated_tool`` so FastMCP still sees the real
     signature (``functools.wraps`` preserves it).
     """
 
@@ -1133,6 +1133,72 @@ ServerSession._received_request = _received_request
 # --- MCP Server Initialization ---
 # Create FastMCP instance with default settings - will be reconfigured in main()
 mcp = FastMCP("Metasploit Tools Enhanced (Streamlined)")
+
+
+# ---------------------------------------------------------------------------
+# Tool behavior taxonomy (MCP tool annotations) — single source of truth.
+#
+# Each tool advertises MCP annotation hints so clients can reason about and gate
+# behavior. `destructiveHint: True` also marks the state-changing tools that the
+# safety gate (@dangerous_tool) protects, keeping one authoritative classification.
+# ---------------------------------------------------------------------------
+_READ_ONLY = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": True,
+}
+
+
+def _destructive(idempotent: bool = False) -> Dict[str, bool]:
+    return {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": idempotent,
+        "openWorldHint": True,
+    }
+
+
+TOOL_ANNOTATIONS: Dict[str, Dict[str, bool]] = {
+    # Read-only discovery / intelligence / status
+    "describe_module": _READ_ONLY,
+    "get_module_documentation": _READ_ONLY,
+    "list_exploits": _READ_ONLY,
+    "list_payloads": _READ_ONLY,
+    "list_active_sessions": _READ_ONLY,
+    "list_listeners": _READ_ONLY,
+    "list_hosts": _READ_ONLY,
+    "list_services": _READ_ONLY,
+    "list_vulnerabilities": _READ_ONLY,
+    "list_notes": _READ_ONLY,
+    "list_credentials": _READ_ONLY,
+    "list_loot": _READ_ONLY,
+    "check_vulnerability": _READ_ONLY,  # probes a target but performs no exploitation
+    "get_module_results": _READ_ONLY,
+    "health_check": _READ_ONLY,
+    # State-changing / offensive (gated by @dangerous_tool)
+    "run_exploit": _destructive(),
+    "run_auxiliary_module": _destructive(),
+    "run_post_module": _destructive(),
+    "generate_payload": _destructive(),
+    "send_session_command": _destructive(),
+    "start_listener": _destructive(),
+    "terminate_session": _destructive(idempotent=True),
+    "stop_job": _destructive(idempotent=True),
+    "kill_all_handler_jobs": _destructive(idempotent=True),
+}
+
+
+def annotated_tool(func):
+    """Register a tool via ``mcp.tool`` with annotations from TOOL_ANNOTATIONS.
+
+    Drop-in for ``@annotated_tool``; looks the tool up by function name (preserved
+    through ``@dangerous_tool`` via functools.wraps) so annotations live in one
+    place. Falls back to no annotations for an unlisted tool.
+    """
+    ann = TOOL_ANNOTATIONS.get(func.__name__)
+    return mcp.tool(annotations=ann)(func) if ann else mcp.tool()(func)
+
 
 # --- Internal Helper Functions ---
 
@@ -2713,7 +2779,7 @@ async def _execute_module_console(
 # --- MCP Tool Definitions ---
 
 
-@mcp.tool()
+@annotated_tool
 async def describe_module(module: str, module_type: str = "exploit") -> Dict[str, Any]:
     """
     Get detailed information about a Metasploit module BEFORE using it.
@@ -2936,7 +3002,7 @@ async def describe_module(module: str, module_type: str = "exploit") -> Dict[str
         return {"status": "error", "message": f"Unexpected error: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
 async def get_module_documentation(module: str) -> Dict[str, Any]:
     """
     Retrieve detailed usage documentation for a Metasploit module.
@@ -3116,7 +3182,7 @@ async def _find_similar_documentation_files(
         return []
 
 
-@mcp.tool()
+@annotated_tool
 async def list_exploits(search: str = "", ctx: Optional[Context] = None) -> List[str]:
     """
     List available Metasploit exploits, optionally filtered by search term.
@@ -3190,7 +3256,7 @@ async def list_exploits(search: str = "", ctx: Optional[Context] = None) -> List
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_payloads(
     platform: str = "",
     arch: str = "",
@@ -3423,7 +3489,7 @@ async def list_payloads(
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def generate_payload(
     payload: str,
@@ -3770,7 +3836,7 @@ async def generate_payload(
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def run_exploit(
     module: str,
@@ -4138,7 +4204,7 @@ async def run_exploit(
     return result
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def run_post_module(
     module: str,
@@ -4267,7 +4333,7 @@ async def run_post_module(
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def run_auxiliary_module(
     module: str,
@@ -4397,7 +4463,7 @@ _hide_inactivity_timeout_from_signature(run_post_module)
 _hide_inactivity_timeout_from_signature(run_auxiliary_module)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_active_sessions() -> Dict[str, Any]:
     """List active Metasploit sessions with their details."""
     client = get_msf_client()
@@ -4859,7 +4925,7 @@ async def _db_intel(
         return {"status": "error", "error": "error", "message": f"Unexpected error: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
 async def list_hosts(workspace: Optional[str] = None) -> Dict[str, Any]:
     """List hosts recorded in the Metasploit workspace database (read-only).
 
@@ -4874,7 +4940,7 @@ async def list_hosts(workspace: Optional[str] = None) -> Dict[str, Any]:
     return await _db_intel("db.hosts", "hosts", workspace)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_services(
     workspace: Optional[str] = None,
     host: Optional[str] = None,
@@ -4903,7 +4969,7 @@ async def list_services(
     )
 
 
-@mcp.tool()
+@annotated_tool
 async def list_vulnerabilities(
     workspace: Optional[str] = None, host: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -4920,7 +4986,7 @@ async def list_vulnerabilities(
     return await _db_intel("db.vulns", "vulns", workspace, addresses=[host] if host else None)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_notes(
     workspace: Optional[str] = None, host: Optional[str] = None, ntype: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -4939,7 +5005,7 @@ async def list_notes(
     )
 
 
-@mcp.tool()
+@annotated_tool
 async def list_credentials(workspace: Optional[str] = None) -> Dict[str, Any]:
     """List credentials recorded in the workspace database (read-only).
 
@@ -4953,7 +5019,7 @@ async def list_credentials(workspace: Optional[str] = None) -> Dict[str, Any]:
     return await _db_intel("db.creds", "creds", workspace)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_loot(workspace: Optional[str] = None, host: Optional[str] = None) -> Dict[str, Any]:
     """List loot recorded in the workspace database (read-only).
 
@@ -4980,7 +5046,7 @@ def _map_check_code(code: str) -> str:
     return "unknown"
 
 
-@mcp.tool()
+@annotated_tool
 async def check_vulnerability(
     module: str,
     options: Union[Dict[str, Any], str],
@@ -5095,7 +5161,7 @@ async def check_vulnerability(
     }
 
 
-@mcp.tool()
+@annotated_tool
 async def get_module_results(execution_id: str) -> Dict[str, Any]:
     """Retrieve results/status for an asynchronously launched module execution.
 
@@ -5160,7 +5226,7 @@ async def get_module_results(execution_id: str) -> Dict[str, Any]:
     }
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def send_session_command(
     session_id: int,
@@ -5544,7 +5610,7 @@ async def send_session_command(
 # --- Job and Listener Management Tools ---
 
 
-@mcp.tool()
+@annotated_tool
 async def list_listeners() -> Dict[str, Any]:
     """
     List all active Metasploit jobs, categorizing exploit/multi/handler jobs as "handlers".
@@ -5629,7 +5695,7 @@ async def list_listeners() -> Dict[str, Any]:
         return {"status": "error", "message": f"Unexpected server error listing jobs: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def start_listener(
     payload: str,
@@ -5802,7 +5868,7 @@ async def start_listener(
     return result
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def stop_job(job_id: int) -> Dict[str, Any]:
     """
@@ -5864,7 +5930,7 @@ async def stop_job(job_id: int) -> Dict[str, Any]:
         return {"status": "error", "message": f"Unexpected server error stopping job {job_id}: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def kill_all_handler_jobs() -> Dict[str, Any]:
     """
@@ -5966,7 +6032,7 @@ async def kill_all_handler_jobs() -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@annotated_tool
 @dangerous_tool
 async def terminate_session(session_id: int, kill_associated_job: bool = True) -> Dict[str, Any]:
     """
@@ -6126,7 +6192,7 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
 # Add both MCP tool and HTTP endpoint for health checking
 
 
-@mcp.tool()
+@annotated_tool
 async def health_check() -> Dict[str, Any]:
     """Check connectivity to the Metasploit RPC service (MCP tool version)."""
     try:

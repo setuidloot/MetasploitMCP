@@ -35,9 +35,9 @@
 
 ## 5. Phase 3 — Tool annotations
 
-- [ ] 5.1 Define the read-only vs destructive taxonomy for every existing and new tool (single source shared with the safety gate)
-- [ ] 5.2 Add `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint` to every `@mcp.tool`
-- [ ] 5.3 Test asserting each tool advertises the expected annotations
+- [x] 5.1 Define the read-only vs destructive taxonomy for every existing and new tool (single source shared with the safety gate)
+- [x] 5.2 Add `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint` to every `@mcp.tool`
+- [x] 5.3 Test asserting each tool advertises the expected annotations
 
 ## 6. Phase 3 — Structured output
 
