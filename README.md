@@ -21,12 +21,26 @@ An **unofficial**, modern, secure Model Context Protocol (MCP) server that provi
 
 ### Core Capabilities
 - **Exploit Management**: Search, configure, and execute Metasploit exploits
+- **Non-destructive checks**: `check_vulnerability` runs a module's `check` without exploiting
 - **Payload Generation**: Create custom payloads with advanced encoding options
 - **Session Management**: Control active sessions with command execution
 - **Listener Management**: Start and manage reverse handlers
-- **Security Validation**: Built-in bind address validation and input sanitization
+- **Workspace database intelligence**: Read hosts, services, vulnerabilities, notes, credentials, and loot from the Metasploit database
+- **Async results**: Retrieve results of long-running module runs with `get_module_results`
+
+### MCP protocol features
+- **Tool annotations**: every tool advertises `readOnly` / `destructive` hints
+- **Structured output**: typed results with a text fallback for older clients
+- **Resources**: `msf://server/info` and `msf://module/{module}` documentation
+- **Elicitation**: optional client confirmation before destructive actions
+
+See **[docs/MCP_API.md](docs/MCP_API.md)** for the full tool/resource reference,
+MCP specification conformance, and a comparison with the official Rapid7 MCP.
 
 ### Security Features
+- **Optional safe mode**: offensive tools (exploit/module execution, payload generation, session/listener control) are **enabled by default** (this is an offensive tool). Harden a deployment with `--safe-mode` (or `MSF_MCP_ALLOW_DANGEROUS=false`) to expose **read-only tools only**. *(This intentionally inverts the official Rapid7 server's default-off posture to avoid regressing existing users.)*
+- **Optional rate limiting**: off by default; enable a per-minute cap with `--rate-limit N`
+- **Optional confirmation**: `--confirm-dangerous` asks the client to approve each destructive action via MCP elicitation
 - **Bind Address Validation**: Rejects bind addresses that are neither a wildcard nor an IP configured on the host
 - **Input Sanitization**: Comprehensive validation of all parameters, including rejection of control characters in module options (command-injection guard)
 - **Error Handling**: Prevents information leakage through proper error management
@@ -54,12 +68,20 @@ An **unofficial**, modern, secure Model Context Protocol (MCP) server that provi
 
 ### 1. Installation
 
+**From PyPI (recommended):**
+
 ```bash
-# Clone the repository
+pip install metasploit-mcp
+```
+
+This installs the `metasploit-mcp` CLI. To try it without installing into your
+environment, use [`pipx`](https://pipx.pypa.io/): `pipx run metasploit-mcp --help`.
+
+**From source (for development):**
+
+```bash
 git clone https://github.com/setuidloot/MetasploitMCP.git
 cd MetasploitMCP
-
-# Install with Poetry
 poetry install
 poetry shell
 ```
@@ -92,21 +114,26 @@ export MSF_RPC_PROTOCOL=msgpack  # Options: 'msgpack' (default) or 'jsonrpc'
 ### 4. Run the Server
 
 ```bash
-# Using the CLI entry point (recommended)
+# Full toolset (default) — offensive tools enabled
 metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 
-# Or using Poetry directly
-poetry run metasploit-mcp --transport http --host 127.0.0.1 --port 8085
+# Hardened: read-only tools only
+metasploit-mcp --transport http --safe-mode
 
-# Or run the module
-poetry run python -m metasploit_mcp
+# Optional: require client confirmation before each destructive action
+metasploit-mcp --transport http --confirm-dangerous
 
-# Using Make
-make run
+# Optional: cap dangerous requests per minute
+metasploit-mcp --transport http --rate-limit 60
 
-# Debug mode
-make run-debug
+# From source
+poetry run metasploit-mcp --transport stdio
+make run          # or: make run-debug
 ```
+
+> By default the server exposes the **full toolset** (offensive tools enabled).
+> Pass `--safe-mode` (or set `MSF_MCP_ALLOW_DANGEROUS=false`) to expose read-only
+> tools only. See [docs/MCP_API.md](docs/MCP_API.md#safety-model) for the full safety model.
 
 ## Development
 
@@ -179,25 +206,29 @@ MetasploitMCP/
 
 ### Claude Desktop
 
-Configure `claude_desktop_config.json`:
+Configure `claude_desktop_config.json` (after `pip install metasploit-mcp`):
 
 ```json
 {
     "mcpServers": {
         "metasploit": {
-            "command": "poetry",
+            "command": "metasploit-mcp",
             "args": [
-                "run", "metasploit-mcp",
                 "--transport", "stdio"
             ],
-            "cwd": "/path/to/MetasploitMCP",
             "env": {
-                "MSF_PASSWORD": "yourpassword"
+                "MSF_PASSWORD": "yourpassword",
+                "MSF_SERVER": "127.0.0.1",
+                "MSF_PORT": "55553"
             }
         }
     }
 }
 ```
+
+Add `"--safe-mode"` to the args to expose read-only tools only. If you installed
+from source instead of PyPI, use `"command": "poetry"` with
+`"args": ["run", "metasploit-mcp", …]` and a `"cwd"` pointing at the checkout.
 
 ### Other MCP Clients
 

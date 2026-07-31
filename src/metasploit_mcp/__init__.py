@@ -7,7 +7,7 @@ functionality through the MCP protocol.
 
 from .server import mcp, logger
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __all__ = ["main", "mcp", "logger", "__version__"]
 
 
@@ -82,7 +82,70 @@ def main():
         action="store_true",
         help="Force finding an available port starting from --port or 8085",
     )
+    parser.add_argument(
+        "--safe-mode",
+        action="store_true",
+        default=None,
+        help=(
+            "Harden the server: expose read-only tools only and DISABLE state-changing / "
+            "offensive tools (exploit & module execution, payload generation, session "
+            "control, listeners). Dangerous tools are ENABLED by default. Equivalent to "
+            "MSF_MCP_ALLOW_DANGEROUS=false."
+        ),
+    )
+    parser.add_argument(
+        "--allow-dangerous",
+        action="store_true",
+        default=None,
+        help="Explicitly enable dangerous tools (this is already the default; kept for clarity).",
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Max dangerous-tool requests per minute (0 disables the limit). "
+            "Default 60; can also be set with MSF_MCP_RATE_LIMIT."
+        ),
+    )
+    parser.add_argument(
+        "--confirm-dangerous",
+        action="store_true",
+        default=None,
+        help=(
+            "Ask the client to confirm (via MCP elicitation) before each destructive "
+            "action. Falls back to the gate if the client can't elicit. Can also be "
+            "set with MSF_MCP_CONFIRM_DANGEROUS=true."
+        ),
+    )
     args = parser.parse_args()
+
+    # Apply the safety posture (CLI overrides environment). Dangerous actions are
+    # ENABLED by default; --safe-mode (or MSF_MCP_ALLOW_DANGEROUS=false) disables them.
+    from .server import configure_safety
+
+    if args.safe_mode:
+        allow_dangerous = False
+    elif args.allow_dangerous:
+        allow_dangerous = True
+    else:
+        allow_dangerous = None  # keep the default/env value
+
+    configure_safety(
+        allow_dangerous=allow_dangerous,
+        rate_limit_per_min=args.rate_limit,
+        require_confirmation=True if args.confirm_dangerous else None,
+    )
+    from .server import DANGEROUS_ACTIONS_ENABLED
+
+    if DANGEROUS_ACTIONS_ENABLED:
+        logger.info(
+            "Dangerous actions enabled (default): offensive tools are available. "
+            "Run with --safe-mode to expose read-only tools only."
+        )
+    else:
+        logger.warning("Safe mode: read-only tools only; offensive tools are disabled.")
 
     if args.transport == "stdio":
         logger.info("Starting MCP server in STDIO transport mode.")

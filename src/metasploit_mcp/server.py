@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import base64
+import collections
 import contextlib
+import functools
 import inspect
 import ipaddress
 import logging
@@ -13,6 +15,7 @@ import socket
 import psutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -379,6 +382,145 @@ MODULE_RESULT_POLL_TIMEOUT = 300  # Max time to wait for auxiliary/post module c
 MODULE_RESULT_POLL_INTERVAL = 2  # How often to check module.running_stats
 RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
 MAX_TOOL_TIMEOUT_SECONDS = 120  # Maximum timeout allowed for tool parameters (cap at 120s)
+
+# ---------------------------------------------------------------------------
+# Safety controls (optional hardening) — dangerous actions ENABLED by default
+#
+# This is an offensive-security tool that has always exposed its full toolset,
+# so state-changing / offensive tools (exploit execution, payload delivery,
+# session control, listener/job control) are ENABLED by default to avoid
+# regressing existing users. Operators can harden a deployment by opting into
+# "safe mode" (read-only tools only) and/or a rate limit:
+#   --safe-mode / MSF_MCP_ALLOW_DANGEROUS=false   -> disable dangerous tools
+#   --rate-limit N / MSF_MCP_RATE_LIMIT=N         -> cap dangerous requests/min
+#   --confirm-dangerous / MSF_MCP_CONFIRM_DANGEROUS -> elicit confirmation
+# (This deliberately inverts the official Rapid7 server's default-off posture.)
+# ---------------------------------------------------------------------------
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+# Read from environment at import; can be overridden by configure_safety() (CLI).
+DANGEROUS_ACTIONS_ENABLED = _env_flag("MSF_MCP_ALLOW_DANGEROUS", True)
+# When enabled, destructive tools ask the client to confirm via MCP elicitation
+# before running (best-effort; falls back to the gate if the client can't elicit).
+CONFIRM_DANGEROUS = _env_flag("MSF_MCP_CONFIRM_DANGEROUS", False)
+# Rate limiting is OFF by default (0) so it never silently throttles existing
+# automation; operators opt in with --rate-limit / MSF_MCP_RATE_LIMIT.
+try:
+    RATE_LIMIT_PER_MIN = int(os.environ.get("MSF_MCP_RATE_LIMIT", "0") or 0)
+except ValueError:
+    RATE_LIMIT_PER_MIN = 0
+
+_RATE_WINDOW_SECONDS = 60.0
+_rate_events: "collections.deque[float]" = collections.deque()
+
+
+def configure_safety(
+    allow_dangerous: Optional[bool] = None,
+    rate_limit_per_min: Optional[int] = None,
+    require_confirmation: Optional[bool] = None,
+) -> None:
+    """Set the safety posture (called from the CLI in __init__.py)."""
+    global DANGEROUS_ACTIONS_ENABLED, RATE_LIMIT_PER_MIN, CONFIRM_DANGEROUS
+    if allow_dangerous is not None:
+        DANGEROUS_ACTIONS_ENABLED = allow_dangerous
+    if rate_limit_per_min is not None:
+        RATE_LIMIT_PER_MIN = rate_limit_per_min
+    if require_confirmation is not None:
+        CONFIRM_DANGEROUS = require_confirmation
+
+
+def _rate_limit_retry_after() -> Optional[float]:
+    """Return None if a request is allowed, else seconds until a slot frees up.
+
+    Global sliding-window limiter. ``RATE_LIMIT_PER_MIN <= 0`` disables limiting.
+    (Global rather than truly per-client: stdio has a single client, and the
+    HTTP transport does not surface a stable per-caller identity here.)
+    """
+    limit = RATE_LIMIT_PER_MIN
+    if not limit or limit <= 0:
+        return None
+    now = time.monotonic()
+    while _rate_events and now - _rate_events[0] > _RATE_WINDOW_SECONDS:
+        _rate_events.popleft()
+    if len(_rate_events) >= limit:
+        return round(_RATE_WINDOW_SECONDS - (now - _rate_events[0]), 1)
+    _rate_events.append(now)
+    return None
+
+
+async def _confirm_dangerous(ctx: Any, tool_name: str) -> bool:
+    """Best-effort user confirmation for a destructive action via MCP elicitation.
+
+    Returns True to proceed, False if the user explicitly declined/cancelled.
+    When confirmation is disabled, or the client does not support elicitation,
+    this returns True and the (already-passed) safety gate remains the control.
+    """
+    if not CONFIRM_DANGEROUS:
+        return True
+    elicit = getattr(ctx, "elicit", None) if ctx is not None else None
+    if not callable(elicit):
+        # Client/context cannot elicit — fall back to the gate (proceed).
+        return True
+    try:
+        result = await elicit(
+            message=f"Confirm running '{tool_name}'? This performs a state-changing/offensive action.",
+            response_type=None,
+        )
+    except Exception as e:  # elicitation unsupported at runtime -> gate fallback
+        logger.debug(f"Elicitation unavailable for {tool_name}, proceeding via gate: {e}")
+        return True
+    action = type(result).__name__
+    if action == "AcceptedElicitation":
+        return True
+    # DeclinedElicitation / CancelledElicitation (or anything non-accepting)
+    return False
+
+
+def dangerous_tool(func):
+    """Decorator gating a state-changing tool behind the dangerous-actions flag,
+    the rate limiter, and (optionally) elicitation confirmation. Returns a
+    structured error instead of running when blocked. Apply BELOW
+    ``@annotated_tool`` so FastMCP still sees the real signature
+    (``functools.wraps`` preserves it).
+    """
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        if not DANGEROUS_ACTIONS_ENABLED:
+            return {
+                "status": "error",
+                "error": "dangerous_actions_disabled",
+                "message": (
+                    f"'{func.__name__}' performs a state-changing/offensive action and this "
+                    "server is running in safe mode (read-only tools only). Restart without "
+                    "--safe-mode (or set MSF_MCP_ALLOW_DANGEROUS=true) to enable it."
+                ),
+            }
+        retry_after = _rate_limit_retry_after()
+        if retry_after is not None:
+            return {
+                "status": "error",
+                "error": "rate_limited",
+                "message": (
+                    f"Rate limit of {RATE_LIMIT_PER_MIN} requests/min exceeded. "
+                    f"Retry in ~{retry_after}s."
+                ),
+                "retry_after_seconds": retry_after,
+            }
+        if not await _confirm_dangerous(kwargs.get("ctx"), func.__name__):
+            return {
+                "status": "cancelled",
+                "error": "cancelled_by_user",
+                "message": f"'{func.__name__}' was cancelled: user declined confirmation.",
+            }
+        return await func(*args, **kwargs)
+
+    return wrapper
+
 
 # Regular Expressions for Prompt Detection
 MSF_PROMPT_RE = re.compile(
@@ -1040,6 +1182,72 @@ ServerSession._received_request = _received_request
 # --- MCP Server Initialization ---
 # Create FastMCP instance with default settings - will be reconfigured in main()
 mcp = FastMCP("Metasploit Tools Enhanced (Streamlined)")
+
+
+# ---------------------------------------------------------------------------
+# Tool behavior taxonomy (MCP tool annotations) — single source of truth.
+#
+# Each tool advertises MCP annotation hints so clients can reason about and gate
+# behavior. `destructiveHint: True` also marks the state-changing tools that the
+# safety gate (@dangerous_tool) protects, keeping one authoritative classification.
+# ---------------------------------------------------------------------------
+_READ_ONLY = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": True,
+}
+
+
+def _destructive(idempotent: bool = False) -> Dict[str, bool]:
+    return {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": idempotent,
+        "openWorldHint": True,
+    }
+
+
+TOOL_ANNOTATIONS: Dict[str, Dict[str, bool]] = {
+    # Read-only discovery / intelligence / status
+    "describe_module": _READ_ONLY,
+    "get_module_documentation": _READ_ONLY,
+    "list_exploits": _READ_ONLY,
+    "list_payloads": _READ_ONLY,
+    "list_active_sessions": _READ_ONLY,
+    "list_listeners": _READ_ONLY,
+    "list_hosts": _READ_ONLY,
+    "list_services": _READ_ONLY,
+    "list_vulnerabilities": _READ_ONLY,
+    "list_notes": _READ_ONLY,
+    "list_credentials": _READ_ONLY,
+    "list_loot": _READ_ONLY,
+    "check_vulnerability": _READ_ONLY,  # probes a target but performs no exploitation
+    "get_module_results": _READ_ONLY,
+    "health_check": _READ_ONLY,
+    # State-changing / offensive (gated by @dangerous_tool)
+    "run_exploit": _destructive(),
+    "run_auxiliary_module": _destructive(),
+    "run_post_module": _destructive(),
+    "generate_payload": _destructive(),
+    "send_session_command": _destructive(),
+    "start_listener": _destructive(),
+    "terminate_session": _destructive(idempotent=True),
+    "stop_job": _destructive(idempotent=True),
+    "kill_all_handler_jobs": _destructive(idempotent=True),
+}
+
+
+def annotated_tool(func):
+    """Register a tool via ``mcp.tool`` with annotations from TOOL_ANNOTATIONS.
+
+    Drop-in for ``@annotated_tool``; looks the tool up by function name (preserved
+    through ``@dangerous_tool`` via functools.wraps) so annotations live in one
+    place. Falls back to no annotations for an unlisted tool.
+    """
+    ann = TOOL_ANNOTATIONS.get(func.__name__)
+    return mcp.tool(annotations=ann)(func) if ann else mcp.tool()(func)
+
 
 # --- Internal Helper Functions ---
 
@@ -2620,7 +2828,7 @@ async def _execute_module_console(
 # --- MCP Tool Definitions ---
 
 
-@mcp.tool()
+@annotated_tool
 async def describe_module(module: str, module_type: str = "exploit") -> Dict[str, Any]:
     """
     Get detailed information about a Metasploit module BEFORE using it.
@@ -2843,7 +3051,7 @@ async def describe_module(module: str, module_type: str = "exploit") -> Dict[str
         return {"status": "error", "message": f"Unexpected error: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
 async def get_module_documentation(module: str) -> Dict[str, Any]:
     """
     Retrieve detailed usage documentation for a Metasploit module.
@@ -3023,7 +3231,7 @@ async def _find_similar_documentation_files(
         return []
 
 
-@mcp.tool()
+@annotated_tool
 async def list_exploits(search: str = "", ctx: Optional[Context] = None) -> List[str]:
     """
     List available Metasploit exploits, optionally filtered by search term.
@@ -3097,7 +3305,7 @@ async def list_exploits(search: str = "", ctx: Optional[Context] = None) -> List
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_payloads(
     platform: str = "",
     arch: str = "",
@@ -3330,7 +3538,8 @@ async def list_payloads(
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def generate_payload(
     payload: str,
     format: str,
@@ -3676,7 +3885,8 @@ async def generate_payload(
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def run_exploit(
     module: str,
     options: Union[Dict[str, Any], str],
@@ -4043,7 +4253,8 @@ async def run_exploit(
     return result
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def run_post_module(
     module: str,
     session_id: int,
@@ -4171,7 +4382,8 @@ async def run_post_module(
         await keepalive.stop(send_completion=False)
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def run_auxiliary_module(
     module: str,
     options: Union[Dict[str, Any], str],
@@ -4300,7 +4512,7 @@ _hide_inactivity_timeout_from_signature(run_post_module)
 _hide_inactivity_timeout_from_signature(run_auxiliary_module)
 
 
-@mcp.tool()
+@annotated_tool
 async def list_active_sessions() -> Dict[str, Any]:
     """List active Metasploit sessions with their details."""
     client = get_msf_client()
@@ -4672,7 +4884,413 @@ async def _drive_shell_command(
         }
 
 
-@mcp.tool()
+# ---------------------------------------------------------------------------
+# Metasploit workspace database (db.*) intelligence tools — read-only.
+# Parity with the official Rapid7 MCP: hosts / services / vulnerabilities /
+# notes / credentials / loot. Each is read-only and workspace-scoped, and each
+# degrades to a structured error (never raises) when no database is attached.
+# ---------------------------------------------------------------------------
+
+
+def _decode_rpc(obj: Any) -> Any:
+    """Recursively decode msgpack byte keys/values to ``str`` for JSON-friendly output."""
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {_decode_rpc(k): _decode_rpc(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_decode_rpc(v) for v in obj]
+    return obj
+
+
+async def _db_connected(client: Any) -> bool:
+    """Return True if a Metasploit database is attached to the RPC server.
+
+    ``db.status`` returns e.g. ``{"driver": "postgresql", "db": "msf"}`` when a
+    database is connected; the ``db`` key is absent/empty otherwise.
+    """
+    status = _decode_rpc(await asyncio.to_thread(lambda: client.call("db.status")))
+    return bool(isinstance(status, dict) and status.get("db"))
+
+
+async def _db_intel(
+    method: str, result_key: str, workspace: Optional[str] = None, **filters: Any
+) -> Dict[str, Any]:
+    """Shared read-only helper for ``db.*`` listing calls.
+
+    Returns a structured error (never raises) when the client is not initialized
+    or no database is attached, satisfying the degraded-mode requirement.
+    """
+    try:
+        client = get_msf_client()
+    except ConnectionError as e:
+        return {"status": "error", "error": "not_initialized", "message": str(e)}
+
+    try:
+        connected = await asyncio.wait_for(_db_connected(client), timeout=RPC_CALL_TIMEOUT)
+        if not connected:
+            return {
+                "status": "error",
+                "error": "database_unavailable",
+                "message": (
+                    "No Metasploit database is connected. Initialize one (msfdb init) and "
+                    "restart msfrpcd against it to use workspace intelligence tools."
+                ),
+            }
+
+        opts: Dict[str, Any] = {k: v for k, v in filters.items() if v is not None}
+        if workspace:
+            opts["workspace"] = workspace
+
+        raw = _decode_rpc(
+            await asyncio.wait_for(
+                asyncio.to_thread(lambda: client.call(method, [opts])),
+                timeout=RPC_CALL_TIMEOUT,
+            )
+        )
+        if isinstance(raw, dict):
+            items = raw.get(result_key, [])
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            items = []
+
+        return {
+            "status": "success",
+            "workspace": workspace or "default",
+            "count": len(items),
+            result_key: items,
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "error": "timeout",
+            "message": f"Metasploit RPC did not respond within {RPC_CALL_TIMEOUT}s.",
+        }
+    except MsfRpcError as e:
+        return {"status": "error", "error": "rpc_error", "message": f"Metasploit RPC error: {e}"}
+    except Exception as e:  # pragma: no cover - defensive
+        logger.exception(f"Unexpected error querying {method}")
+        return {"status": "error", "error": "error", "message": f"Unexpected error: {e}"}
+
+
+@annotated_tool
+async def list_hosts(workspace: Optional[str] = None) -> Dict[str, Any]:
+    """List hosts recorded in the Metasploit workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name. Defaults to the current workspace.
+
+    Returns:
+        Dict with status, workspace, count, and a ``hosts`` list (address,
+        hostname, os, state, ...). Returns a structured error when no database
+        is attached.
+    """
+    return await _db_intel("db.hosts", "hosts", workspace)
+
+
+@annotated_tool
+async def list_services(
+    workspace: Optional[str] = None,
+    host: Optional[str] = None,
+    ports: Optional[str] = None,
+    proto: Optional[str] = None,
+) -> Dict[str, Any]:
+    """List services recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+        ports: Optional port or port range filter (e.g. "445" or "1-1024").
+        proto: Optional protocol filter (e.g. "tcp", "udp").
+
+    Returns:
+        Dict with status, workspace, count, and a ``services`` list (host, port,
+        proto, name, state, info).
+    """
+    return await _db_intel(
+        "db.services",
+        "services",
+        workspace,
+        addresses=[host] if host else None,
+        ports=ports,
+        proto=proto,
+    )
+
+
+@annotated_tool
+async def list_vulnerabilities(
+    workspace: Optional[str] = None, host: Optional[str] = None
+) -> Dict[str, Any]:
+    """List vulnerabilities recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+
+    Returns:
+        Dict with status, workspace, count, and a ``vulns`` list (host, name,
+        references such as CVE identifiers).
+    """
+    return await _db_intel("db.vulns", "vulns", workspace, addresses=[host] if host else None)
+
+
+@annotated_tool
+async def list_notes(
+    workspace: Optional[str] = None, host: Optional[str] = None, ntype: Optional[str] = None
+) -> Dict[str, Any]:
+    """List notes recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+        ntype: Optional note type filter.
+
+    Returns:
+        Dict with status, workspace, count, and a ``notes`` list (host, type, data).
+    """
+    return await _db_intel(
+        "db.notes", "notes", workspace, addresses=[host] if host else None, ntype=ntype
+    )
+
+
+@annotated_tool
+async def list_credentials(workspace: Optional[str] = None) -> Dict[str, Any]:
+    """List credentials recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+
+    Returns:
+        Dict with status, workspace, count, and a ``creds`` list (associated
+        host/service, public and private components).
+    """
+    return await _db_intel("db.creds", "creds", workspace)
+
+
+@annotated_tool
+async def list_loot(workspace: Optional[str] = None, host: Optional[str] = None) -> Dict[str, Any]:
+    """List loot recorded in the workspace database (read-only).
+
+    Args:
+        workspace: Optional workspace name.
+        host: Optional host address to filter by.
+
+    Returns:
+        Dict with status, workspace, count, and a ``loots`` list (host, type,
+        stored path/name).
+    """
+    return await _db_intel("db.loots", "loots", workspace, addresses=[host] if host else None)
+
+
+def _map_check_code(code: str) -> str:
+    """Map a Metasploit check ``code`` to a coarse, structured check state."""
+    code = (code or "").lower()
+    if code in ("vulnerable", "appears", "detected"):
+        return "vulnerable"
+    if code == "safe":
+        return "safe"
+    if code == "unsupported":
+        return "unsupported"
+    return "unknown"
+
+
+@annotated_tool
+async def check_vulnerability(
+    module: str,
+    options: Union[Dict[str, Any], str],
+    module_type: str = "exploit",
+    timeout_seconds: int = 60,
+    ctx: Optional[Context] = None,
+) -> Dict[str, Any]:
+    """Run a module's non-destructive ``check`` against a target (no exploitation).
+
+    Runs Metasploit's ``check`` method only — it never fires the exploit, delivers
+    a payload, or opens a session. Use it to assess whether a target appears
+    vulnerable before deciding to run an exploit.
+
+    Args:
+        module: Module name/path (e.g. 'windows/smb/ms17_010_eternalblue').
+        options: Module options (dict or "K=V,K=V" string). Must include the
+            target (e.g. RHOSTS).
+        module_type: Module type; almost always 'exploit' (also 'auxiliary').
+        timeout_seconds: Max seconds to wait for the check result (capped at 120).
+
+    Returns:
+        Dict with check_state (vulnerable/safe/unsupported/unknown), the raw
+        check code and message, and session_created=False.
+    """
+    timeout_seconds = min(timeout_seconds, MAX_TOOL_TIMEOUT_SECONDS)
+    try:
+        client = get_msf_client()
+    except ConnectionError as e:
+        return {"status": "error", "error": "not_initialized", "message": str(e)}
+
+    try:
+        module_obj = await _get_module_object(module_type, module)
+    except InvalidModuleError as e:
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        return {"status": "error", "message": f"Error loading module '{module}': {e}"}
+
+    module_fullname = getattr(module_obj, "fullname", f"{module_type}/{module}")
+
+    try:
+        module_options = _parse_options_gracefully(options)
+    except ValueError as e:
+        return {"status": "error", "message": f"Invalid options format: {e}"}
+
+    # _set_module_options applies the control-character injection guard and
+    # reports missing/invalid options with a clear error.
+    try:
+        await _set_module_options(module_obj, module_options, module_type=module_type)
+    except ValueError as e:
+        return {"status": "error", "error": "invalid_options", "message": str(e)}
+
+    # On pymetasploit3 module objects, `.check` is a BOOL indicating whether the
+    # module implements a check method (NOT the method itself). Use it to short
+    # -circuit unsupported modules before issuing the RPC.
+    supports_check = getattr(module_obj, "check", None)
+    if supports_check is False:
+        return {
+            "status": "error",
+            "error": "unsupported",
+            "message": f"Module '{module_fullname}' does not implement a check method.",
+        }
+
+    # Run ONLY the check via the RPC module.check method (module_type, name, opts).
+    # This never fires the exploit, delivers a payload, or opens a session.
+    mtype = getattr(module_obj, "moduletype", module_type)
+    mname = getattr(module_obj, "modulename", module)
+    try:
+        check_start = await asyncio.to_thread(
+            lambda: client.call("module.check", [mtype, mname, module_options])
+        )
+    except MsfRpcError as e:
+        return {"status": "error", "error": "rpc_error", "message": f"Check failed to start: {e}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Check failed to start: {e}"}
+
+    check_start = _decode_rpc(check_start)
+    if isinstance(check_start, dict) and check_start.get("error"):
+        return {
+            "status": "error",
+            "error": "check_failed",
+            "message": check_start.get("error_message")
+            or check_start.get("error_string")
+            or "Check could not be started.",
+        }
+    uuid = check_start.get("uuid") if isinstance(check_start, dict) else None
+    if not uuid:
+        return {
+            "status": "error",
+            "error": "unsupported",
+            "message": f"Module '{module_fullname}' did not return a check job (check may be unsupported).",
+        }
+
+    # Poll module.results[uuid] until the check completes.
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout_seconds
+    while loop.time() < deadline:
+        res = _decode_rpc(
+            await asyncio.to_thread(lambda: client.call("module.results", [str(uuid)]))
+        )
+        state = str(res.get("status", "")).lower() if isinstance(res, dict) else ""
+        if state in ("completed", "complete"):
+            result = res.get("result") if isinstance(res.get("result"), dict) else {}
+            code = str(result.get("code", res.get("code", "")))
+            return {
+                "status": "success",
+                "module": module_fullname,
+                "check_state": _map_check_code(code),
+                "code": code or "unknown",
+                "message": result.get("message") or res.get("message") or "",
+                "session_created": False,
+            }
+        if state in ("errored", "error", "failed"):
+            return {
+                "status": "error",
+                "error": "check_failed",
+                "module": module_fullname,
+                "message": res.get("error") or "Check reported an error.",
+            }
+        await asyncio.sleep(0.5)
+
+    return {
+        "status": "timeout",
+        "module": module_fullname,
+        "message": f"Check did not complete within {timeout_seconds}s.",
+        "execution_id": str(uuid),
+    }
+
+
+@annotated_tool
+async def get_module_results(execution_id: str) -> Dict[str, Any]:
+    """Retrieve results/status for an asynchronously launched module execution.
+
+    Pass the ``uuid`` returned by a module-executing tool (run_exploit,
+    run_auxiliary_module, run_post_module, check_vulnerability) to poll its
+    accumulated output and completion status.
+
+    Args:
+        execution_id: The execution/job UUID returned at launch time.
+
+    Returns:
+        Dict with execution_status (completed / running / errored) and the
+        collected result, or a structured not-found error for an unknown id.
+    """
+    if not execution_id:
+        return {"status": "error", "error": "not_found", "message": "No execution id provided."}
+    try:
+        client = get_msf_client()
+    except ConnectionError as e:
+        return {"status": "error", "error": "not_initialized", "message": str(e)}
+
+    try:
+        res = _decode_rpc(
+            await asyncio.wait_for(
+                asyncio.to_thread(lambda: client.call("module.results", [str(execution_id)])),
+                timeout=RPC_CALL_TIMEOUT,
+            )
+        )
+    except asyncio.TimeoutError:
+        return {"status": "error", "error": "timeout", "message": "RPC did not respond in time."}
+    except MsfRpcError as e:
+        return {"status": "error", "error": "rpc_error", "message": f"Metasploit RPC error: {e}"}
+
+    if not isinstance(res, dict) or not res:
+        return {
+            "status": "error",
+            "error": "not_found",
+            "message": f"No results found for execution id '{execution_id}'.",
+        }
+
+    state = str(res.get("status", "")).lower()
+    if state in ("completed", "complete"):
+        return {
+            "status": "success",
+            "execution_id": execution_id,
+            "execution_status": "completed",
+            "result": res.get("result"),
+        }
+    if state in ("errored", "error", "failed"):
+        return {
+            "status": "success",
+            "execution_id": execution_id,
+            "execution_status": "errored",
+            "error": res.get("error") or res.get("error_message"),
+        }
+    # Anything else (typically "running") — return whatever partial data exists.
+    return {
+        "status": "success",
+        "execution_id": execution_id,
+        "execution_status": state or "running",
+        "result": res.get("result"),
+    }
+
+
+@annotated_tool
+@dangerous_tool
 async def send_session_command(
     session_id: int,
     command: str,
@@ -5055,7 +5673,7 @@ async def send_session_command(
 # --- Job and Listener Management Tools ---
 
 
-@mcp.tool()
+@annotated_tool
 async def list_listeners() -> Dict[str, Any]:
     """
     List all active Metasploit jobs, categorizing exploit/multi/handler jobs as "handlers".
@@ -5140,7 +5758,8 @@ async def list_listeners() -> Dict[str, Any]:
         return {"status": "error", "message": f"Unexpected server error listing jobs: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def start_listener(
     payload: str,
     lhost: str,
@@ -5312,7 +5931,8 @@ async def start_listener(
     return result
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def stop_job(job_id: int) -> Dict[str, Any]:
     """
     Stop a running Metasploit job (handler or other). Verifies disappearance.
@@ -5373,7 +5993,8 @@ async def stop_job(job_id: int) -> Dict[str, Any]:
         return {"status": "error", "message": f"Unexpected server error stopping job {job_id}: {e}"}
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def kill_all_handler_jobs() -> Dict[str, Any]:
     """
     Kill all active handler jobs (exploit/multi/handler).
@@ -5474,7 +6095,8 @@ async def kill_all_handler_jobs() -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@annotated_tool
+@dangerous_tool
 async def terminate_session(session_id: int, kill_associated_job: bool = True) -> Dict[str, Any]:
     """
     Forcefully terminate a Metasploit session using the session.stop() method.
@@ -5633,7 +6255,7 @@ async def terminate_session(session_id: int, kill_associated_job: bool = True) -
 # Add both MCP tool and HTTP endpoint for health checking
 
 
-@mcp.tool()
+@annotated_tool
 async def health_check() -> Dict[str, Any]:
     """Check connectivity to the Metasploit RPC service (MCP tool version)."""
     try:
@@ -5648,8 +6270,24 @@ async def health_check() -> Dict[str, Any]:
         msf_version = (
             version_info.get("version", "N/A") if isinstance(version_info, dict) else "N/A"
         )
+        # Report whether a database is attached so callers know if the workspace
+        # intelligence tools (list_hosts/services/vulns/...) are usable.
+        try:
+            database_connected = await asyncio.wait_for(
+                _db_connected(client), timeout=RPC_CALL_TIMEOUT
+            )
+        except Exception:  # pragma: no cover - db status is best-effort
+            database_connected = False
         logger.info(f"Health check successful. MSF Version: {msf_version}")
-        return {"status": "ok", "msf_version": msf_version}
+        return {
+            "status": "ok",
+            "msf_version": msf_version,
+            "database_connected": database_connected,
+            "safety": {
+                "dangerous_actions_enabled": DANGEROUS_ACTIONS_ENABLED,
+                "rate_limit_per_min": RATE_LIMIT_PER_MIN,
+            },
+        }
     except asyncio.TimeoutError:
         error_msg = (
             f"Health check timeout ({RPC_CALL_TIMEOUT}s) - Metasploit server is not responding"
@@ -5662,6 +6300,51 @@ async def health_check() -> Dict[str, Any]:
     except Exception as e:
         logger.exception("Unexpected error during health check.")
         return {"status": "error", "message": f"Internal Server Error during health check: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# MCP resources — expose server info and module documentation as readable
+# resources (in addition to the equivalent tools).
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource("msf://server/info")
+async def server_info_resource() -> Dict[str, Any]:
+    """Server identity, safety posture, and the tool behavior taxonomy."""
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        pkg_version = _pkg_version("metasploit-mcp")
+    except Exception:
+        pkg_version = "unknown"
+    return {
+        "name": "MetasploitMCP",
+        "unofficial": True,
+        "affiliated_with_rapid7": False,
+        "version": pkg_version,
+        "safety": {
+            "dangerous_actions_enabled": DANGEROUS_ACTIONS_ENABLED,
+            "confirm_dangerous": CONFIRM_DANGEROUS,
+            "rate_limit_per_min": RATE_LIMIT_PER_MIN,
+        },
+        "tool_annotations": TOOL_ANNOTATIONS,
+    }
+
+
+@mcp.resource("msf://module/{module}")
+async def module_doc_resource(module: str) -> Dict[str, Any]:
+    """Documentation for a module, addressable as a resource.
+
+    ``module`` is the full module path with the type as the first segment, e.g.
+    ``exploit/windows/smb/ms17_010_eternalblue``. Clients that cannot place
+    slashes in a single URI segment should percent-encode them (``%2F``).
+    """
+    module = (module or "").strip()
+    if "/" not in module:
+        return {"status": "error", "message": f"Expected '<type>/<path>', got '{module}'."}
+    module_type, module_name = module.split("/", 1)
+    # Reuse the module documentation tool (read-only, ungated).
+    return await get_module_documentation(f"{module_type}/{module_name}")
 
 
 # HTTP Health Check Endpoint

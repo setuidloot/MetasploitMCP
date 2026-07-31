@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-07-31
+
+Feature parity with the official Rapid7 MCP server, plus modern MCP-protocol
+capabilities. See [`docs/MCP_API.md`](docs/MCP_API.md) for the full tool/resource
+reference and MCP specification conformance.
+
+### Added
+- **Workspace database intelligence (read-only):** `list_hosts`, `list_services`,
+  `list_vulnerabilities`, `list_notes`, `list_credentials`, `list_loot` — expose
+  the Metasploit workspace database, scoped by workspace, degrading gracefully to
+  a structured error when no database is attached.
+- **`check_vulnerability`:** runs a module's non-destructive `check` (never fires
+  the exploit, delivers a payload, or opens a session), mapping the outcome to a
+  structured state (vulnerable / safe / unsupported / unknown).
+- **`get_module_results`:** retrieves status/output for an asynchronously launched
+  module by its execution UUID.
+- **Tool annotations:** every tool advertises MCP hints (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`).
+- **MCP resources:** `msf://server/info` (identity, safety posture, tool taxonomy)
+  and `msf://module/{module}` (module documentation).
+- **Elicitation confirmation (opt-in):** `--confirm-dangerous` /
+  `MSF_MCP_CONFIRM_DANGEROUS` asks the client to confirm destructive actions,
+  falling back to the safety gate when the client cannot elicit.
+
+### Security / Safety
+- **Opt-in safe mode (dangerous actions ENABLED by default):** state-changing
+  tools (exploit/module execution, payload generation, session control,
+  listeners/jobs) remain available by default so existing users are not
+  regressed. Harden a deployment with `--safe-mode` / `MSF_MCP_ALLOW_DANGEROUS=false`
+  to expose read-only tools only. This intentionally inverts the official Rapid7
+  server's default-off posture.
+- **Optional rate limiting:** off by default; enable with `--rate-limit` /
+  `MSF_MCP_RATE_LIMIT`. `health_check` reports the safety posture.
+- **Optional elicitation confirmation:** `--confirm-dangerous`.
+
+### Changed
+- `health_check` now reports `database_connected` and the `safety` posture.
+- Evaluated the FastMCP 3.x upgrade: cap retained at `<3.4.0` (3.4.x fails to
+  import; 3.3.x is used and verified). Fixed the stale in-package `__version__`.
+
 ## [3.0.1] - 2026-07-31
 
 First release published to PyPI (`pip install metasploit-mcp`).

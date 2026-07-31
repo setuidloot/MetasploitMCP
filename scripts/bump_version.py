@@ -14,7 +14,9 @@ def bump_semver(version: str, part: str) -> str:
     """Return a bumped semantic version string."""
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
     if not match:
-        raise ValueError(f"Invalid semantic version '{version}'. Expected format MAJOR.MINOR.PATCH.")
+        raise ValueError(
+            f"Invalid semantic version '{version}'. Expected format MAJOR.MINOR.PATCH."
+        )
 
     major, minor, patch = (int(group) for group in match.groups())
     if part == "major":
@@ -50,7 +52,7 @@ def bump_pyproject_version(pyproject_path: Path, part: str) -> str:
 
     current_version = ".".join(match.groups()[1:4])
     new_version = bump_semver(current_version, part)
-    replacement = f'{match.group(1)}{new_version}{match.group(5)}'
+    replacement = f"{match.group(1)}{new_version}{match.group(5)}"
     updated_content = VERSION_LINE_RE.sub(replacement, content, count=1)
     pyproject_path.write_text(updated_content, encoding="utf-8")
     return new_version

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "metasploit-mcp"
-version = "3.0.1"
+version = "3.1.0"
 description = "Unofficial Metasploit MCP Server (not affiliated with or endorsed by Rapid7) - provides Metasploit Framework functionality via the Model Context Protocol. A fork of GH05TCREW/MetasploitMCP."
 authors = [
     "GH05TCREW <harmasic@gmail.com>",
@@ -37,6 +37,9 @@ fastapi = ">=0.95.0"
 uvicorn = {extras = ["standard"], version = ">=0.22.0"}
 pymetasploit3 = ">=1.0.6"
 mcp = ">=1.28.1"
+# Cap retained at <3.4.0: fastmcp 3.4.x fails to import in this environment
+# ("cannot import name 'FastMCP' from 'fastmcp'"), even on a clean reinstall.
+# 3.3.x works and passes the full suite. Re-evaluate when 3.4.x import is fixed.
 fastmcp = ">=2.10.3,<3.4.0"
 psutil = "^7.1.3"
 
