@@ -55,10 +55,10 @@
 
 ## 8. Phase 4 — FastMCP 3.x evaluation & dependency finalization
 
-- [ ] 8.1 Attempt lifting the `fastmcp <3.4.0` cap on a branch; run the full suite
-- [ ] 8.2 Confirm elicitation/structured-output/annotations behave on the selected `mcp`/`fastmcp` versions across stdio + HTTP/SSE
-- [ ] 8.3 Either lift the cap or record the specific incompatibility rationale in the repo (CHANGELOG/docs)
-- [ ] 8.4 Regenerate `poetry.lock` and `sbom.json`; ensure CI (black, pre-commit) passes
+- [x] 8.1 Attempt lifting the `fastmcp <3.4.0` cap on a branch; run the full suite
+- [x] 8.2 Confirm elicitation/structured-output/annotations behave on the selected `mcp`/`fastmcp` versions across stdio + HTTP/SSE
+- [x] 8.3 Either lift the cap or record the specific incompatibility rationale in the repo (CHANGELOG/docs)
+- [x] 8.4 Regenerate `poetry.lock` and `sbom.json`; ensure CI (black, pre-commit) passes
 
 ## 9. Verification & wrap-up
 
