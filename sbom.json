@@ -6,11 +6,11 @@
   "metadata": {
     "component": {
       "type": "application",
-      "bom-ref": "pkg:pypi/metasploit-mcp@3.0.0",
+      "bom-ref": "pkg:pypi/metasploit-mcp@3.0.1",
       "name": "metasploit-mcp",
-      "version": "3.0.0",
+      "version": "3.0.1",
       "description": "Unofficial Metasploit MCP Server (not affiliated with or endorsed by Rapid7) - provides Metasploit Framework functionality via the Model Context Protocol. A fork of GH05TCREW/MetasploitMCP.",
-      "purl": "pkg:pypi/metasploit-mcp@3.0.0",
+      "purl": "pkg:pypi/metasploit-mcp@3.0.1",
       "licenses": [
         {
           "license": {
@@ -1980,7 +1980,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:pypi/metasploit-mcp@3.0.0",
+      "ref": "pkg:pypi/metasploit-mcp@3.0.1",
       "dependsOn": [
         "pkg:pypi/aiofile@3.9.0",
         "pkg:pypi/annotated-doc@0.0.4",
