@@ -64,4 +64,4 @@
 
 - [x] 9.1 Run `openspec validate --change official-parity-and-mcp-modernization`
 - [x] 9.2 Full test suite green; update README parity/feature matrix vs official server
-- [ ] 9.3 Archive the change with `/opsx:archive` (or `openspec archive`) once shipped and specs synced
+- [x] 9.3 Archive the change with `/opsx:archive` (or `openspec archive`) once shipped and specs synced

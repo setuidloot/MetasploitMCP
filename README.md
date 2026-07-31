@@ -38,8 +38,9 @@ See **[docs/MCP_API.md](docs/MCP_API.md)** for the full tool/resource reference,
 MCP specification conformance, and a comparison with the official Rapid7 MCP.
 
 ### Security Features
-- **Default-off dangerous actions**: exploit/module execution, payload generation, and session/listener control are disabled unless enabled with `--allow-dangerous` (or `MSF_MCP_ALLOW_DANGEROUS=true`). Read-only tools always work.
-- **Rate limiting**: configurable per-minute cap (`--rate-limit`, default 60)
+- **Optional safe mode**: offensive tools (exploit/module execution, payload generation, session/listener control) are **enabled by default** (this is an offensive tool). Harden a deployment with `--safe-mode` (or `MSF_MCP_ALLOW_DANGEROUS=false`) to expose **read-only tools only**. *(This intentionally inverts the official Rapid7 server's default-off posture to avoid regressing existing users.)*
+- **Optional rate limiting**: off by default; enable a per-minute cap with `--rate-limit N`
+- **Optional confirmation**: `--confirm-dangerous` asks the client to approve each destructive action via MCP elicitation
 - **Bind Address Validation**: Rejects bind addresses that are neither a wildcard nor an IP configured on the host
 - **Input Sanitization**: Comprehensive validation of all parameters, including rejection of control characters in module options (command-injection guard)
 - **Error Handling**: Prevents information leakage through proper error management
@@ -113,23 +114,26 @@ export MSF_RPC_PROTOCOL=msgpack  # Options: 'msgpack' (default) or 'jsonrpc'
 ### 4. Run the Server
 
 ```bash
-# Read-only tools only (safe default)
+# Full toolset (default) — offensive tools enabled
 metasploit-mcp --transport http --host 127.0.0.1 --port 8085
 
-# Enable offensive tools (exploit/module execution, payloads, sessions, listeners)
-metasploit-mcp --transport http --allow-dangerous
+# Hardened: read-only tools only
+metasploit-mcp --transport http --safe-mode
 
 # Optional: require client confirmation before each destructive action
-metasploit-mcp --transport http --allow-dangerous --confirm-dangerous
+metasploit-mcp --transport http --confirm-dangerous
+
+# Optional: cap dangerous requests per minute
+metasploit-mcp --transport http --rate-limit 60
 
 # From source
-poetry run metasploit-mcp --transport stdio --allow-dangerous
+poetry run metasploit-mcp --transport stdio
 make run          # or: make run-debug
 ```
 
-> By default the server exposes **read-only tools only**. Pass `--allow-dangerous`
-> (or set `MSF_MCP_ALLOW_DANGEROUS=true`) to enable state-changing/offensive tools.
-> See [docs/MCP_API.md](docs/MCP_API.md#safety-model) for the full safety model.
+> By default the server exposes the **full toolset** (offensive tools enabled).
+> Pass `--safe-mode` (or set `MSF_MCP_ALLOW_DANGEROUS=false`) to expose read-only
+> tools only. See [docs/MCP_API.md](docs/MCP_API.md#safety-model) for the full safety model.
 
 ## Development
 
@@ -210,8 +214,7 @@ Configure `claude_desktop_config.json` (after `pip install metasploit-mcp`):
         "metasploit": {
             "command": "metasploit-mcp",
             "args": [
-                "--transport", "stdio",
-                "--allow-dangerous"
+                "--transport", "stdio"
             ],
             "env": {
                 "MSF_PASSWORD": "yourpassword",
@@ -223,8 +226,8 @@ Configure `claude_desktop_config.json` (after `pip install metasploit-mcp`):
 }
 ```
 
-Omit `--allow-dangerous` to expose read-only tools only. If you installed from
-source instead of PyPI, use `"command": "poetry"` with
+Add `"--safe-mode"` to the args to expose read-only tools only. If you installed
+from source instead of PyPI, use `"command": "poetry"` with
 `"args": ["run", "metasploit-mcp", …]` and a `"cwd"` pointing at the checkout.
 
 ### Other MCP Clients

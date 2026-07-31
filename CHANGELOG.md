@@ -30,12 +30,15 @@ reference and MCP specification conformance.
   falling back to the safety gate when the client cannot elicit.
 
 ### Security / Safety
-- **Default-off dangerous actions:** state-changing tools (exploit/module
-  execution, payload generation, session control, listeners/jobs) are disabled
-  unless enabled via `--allow-dangerous` / `MSF_MCP_ALLOW_DANGEROUS`. Read-only
-  tools remain available.
-- **Rate limiting:** configurable via `--rate-limit` / `MSF_MCP_RATE_LIMIT`
-  (default 60/min; 0 disables). `health_check` reports the safety posture.
+- **Opt-in safe mode (dangerous actions ENABLED by default):** state-changing
+  tools (exploit/module execution, payload generation, session control,
+  listeners/jobs) remain available by default so existing users are not
+  regressed. Harden a deployment with `--safe-mode` / `MSF_MCP_ALLOW_DANGEROUS=false`
+  to expose read-only tools only. This intentionally inverts the official Rapid7
+  server's default-off posture.
+- **Optional rate limiting:** off by default; enable with `--rate-limit` /
+  `MSF_MCP_RATE_LIMIT`. `health_check` reports the safety posture.
+- **Optional elicitation confirmation:** `--confirm-dangerous`.
 
 ### Changed
 - `health_check` now reports `database_connected` and the `safety` posture.

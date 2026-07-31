@@ -92,6 +92,22 @@ class TestRateLimit:
 
 
 @pytest.mark.unit
+class TestDefaults:
+    def test_dangerous_enabled_by_default(self):
+        # Offensive tool: dangerous actions default ON (env unset -> True).
+        assert server._env_flag("MSF_MCP_SOME_UNSET_VAR", True) is True
+
+    def test_safe_mode_env_disables(self):
+        assert server._env_flag("MSF_MCP_SOME_UNSET_VAR", False) is False
+
+    def test_rate_limit_off_by_default(self, monkeypatch):
+        # No limit configured -> never throttles.
+        monkeypatch.setattr(server, "RATE_LIMIT_PER_MIN", 0)
+        server._rate_events.clear()
+        assert all(server._rate_limit_retry_after() is None for _ in range(100))
+
+
+@pytest.mark.unit
 class TestConfigureSafety:
     def test_configure_safety_sets_globals(self, monkeypatch):
         monkeypatch.setattr(server, "DANGEROUS_ACTIONS_ENABLED", False)

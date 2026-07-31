@@ -384,12 +384,17 @@ RPC_CALL_TIMEOUT = 25  # Default timeout for RPC calls like listing modules
 MAX_TOOL_TIMEOUT_SECONDS = 120  # Maximum timeout allowed for tool parameters (cap at 120s)
 
 # ---------------------------------------------------------------------------
-# Safety controls (default-off dangerous actions + rate limiting)
+# Safety controls (optional hardening) — dangerous actions ENABLED by default
 #
-# State-changing / offensive tools (exploit execution, payload delivery,
-# session control, listener/job control) are treated as "dangerous actions"
-# and are DISABLED by default. Operators opt in explicitly. This mirrors the
-# default-safe posture of the official Rapid7 MCP server.
+# This is an offensive-security tool that has always exposed its full toolset,
+# so state-changing / offensive tools (exploit execution, payload delivery,
+# session control, listener/job control) are ENABLED by default to avoid
+# regressing existing users. Operators can harden a deployment by opting into
+# "safe mode" (read-only tools only) and/or a rate limit:
+#   --safe-mode / MSF_MCP_ALLOW_DANGEROUS=false   -> disable dangerous tools
+#   --rate-limit N / MSF_MCP_RATE_LIMIT=N         -> cap dangerous requests/min
+#   --confirm-dangerous / MSF_MCP_CONFIRM_DANGEROUS -> elicit confirmation
+# (This deliberately inverts the official Rapid7 server's default-off posture.)
 # ---------------------------------------------------------------------------
 
 
@@ -398,14 +403,16 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 # Read from environment at import; can be overridden by configure_safety() (CLI).
-DANGEROUS_ACTIONS_ENABLED = _env_flag("MSF_MCP_ALLOW_DANGEROUS", False)
+DANGEROUS_ACTIONS_ENABLED = _env_flag("MSF_MCP_ALLOW_DANGEROUS", True)
 # When enabled, destructive tools ask the client to confirm via MCP elicitation
 # before running (best-effort; falls back to the gate if the client can't elicit).
 CONFIRM_DANGEROUS = _env_flag("MSF_MCP_CONFIRM_DANGEROUS", False)
+# Rate limiting is OFF by default (0) so it never silently throttles existing
+# automation; operators opt in with --rate-limit / MSF_MCP_RATE_LIMIT.
 try:
-    RATE_LIMIT_PER_MIN = int(os.environ.get("MSF_MCP_RATE_LIMIT", "60") or 0)
+    RATE_LIMIT_PER_MIN = int(os.environ.get("MSF_MCP_RATE_LIMIT", "0") or 0)
 except ValueError:
-    RATE_LIMIT_PER_MIN = 60
+    RATE_LIMIT_PER_MIN = 0
 
 _RATE_WINDOW_SECONDS = 60.0
 _rate_events: "collections.deque[float]" = collections.deque()
@@ -488,9 +495,9 @@ def dangerous_tool(func):
                 "status": "error",
                 "error": "dangerous_actions_disabled",
                 "message": (
-                    f"'{func.__name__}' performs a state-changing/offensive action and is "
-                    "disabled by default. Enable it with the --allow-dangerous flag or "
-                    "MSF_MCP_ALLOW_DANGEROUS=true."
+                    f"'{func.__name__}' performs a state-changing/offensive action and this "
+                    "server is running in safe mode (read-only tools only). Restart without "
+                    "--safe-mode (or set MSF_MCP_ALLOW_DANGEROUS=true) to enable it."
                 ),
             }
         retry_after = _rate_limit_retry_after()

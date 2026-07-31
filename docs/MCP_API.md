@@ -14,17 +14,19 @@ specification. It complements the [README](../README.md) and
 
 ## Safety model
 
-State-changing / offensive tools are **disabled by default** and must be enabled
-explicitly. Read-only tools are always available.
+This is an offensive-security tool, so state-changing / offensive tools are
+**enabled by default**. Deployments can be hardened with an opt-in **safe mode**
+(read-only tools only) and/or a rate limit. *(This intentionally inverts the
+official Rapid7 server's default-off posture to avoid regressing existing users.)*
 
 | Control | Flag | Environment | Default |
 |---|---|---|---|
-| Enable destructive tools | `--allow-dangerous` | `MSF_MCP_ALLOW_DANGEROUS` | off |
-| Rate limit (req/min, 0=off) | `--rate-limit N` | `MSF_MCP_RATE_LIMIT` | 60 |
+| Disable destructive tools (safe mode) | `--safe-mode` | `MSF_MCP_ALLOW_DANGEROUS=false` | dangerous **enabled** |
+| Rate limit (req/min, 0=off) | `--rate-limit N` | `MSF_MCP_RATE_LIMIT` | 0 (off) |
 | Confirm destructive via elicitation | `--confirm-dangerous` | `MSF_MCP_CONFIRM_DANGEROUS` | off |
 
-- A blocked destructive call returns `{"status":"error","error":"dangerous_actions_disabled"}`.
-- Over-limit calls return `{"status":"error","error":"rate_limited","retry_after_seconds":N}`.
+- In safe mode, a blocked destructive call returns `{"status":"error","error":"dangerous_actions_disabled"}`.
+- Over-limit calls (when a rate limit is set) return `{"status":"error","error":"rate_limited","retry_after_seconds":N}`.
 - `health_check` reports the active posture under `safety`.
 
 ## Tool reference
@@ -142,8 +144,8 @@ Protocol features are provided through **FastMCP** (pinned `>=2.10.3,<3.4.0`;
 | Payload generation | ✅ | ❌ |
 | Listener / job lifecycle | ✅ | ❌ |
 | Sessions | ✅ list / interact / terminate | ✅ list / read / write / stop |
-| Default-off dangerous actions | ✅ | ✅ |
-| Rate limiting | ✅ | ✅ |
+| Safety gate for dangerous actions | ✅ (opt-in safe mode; **enabled by default**) | ✅ (default-off) |
+| Rate limiting | ✅ (opt-in) | ✅ |
 | Tool annotations / structured output / resources / elicitation | ✅ | partial |
 
 ## Hosting the docs (GitHub)
