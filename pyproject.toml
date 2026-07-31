@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "metasploit-mcp"
-version = "3.0.0"
+version = "3.0.1"
 description = "Unofficial Metasploit MCP Server (not affiliated with or endorsed by Rapid7) - provides Metasploit Framework functionality via the Model Context Protocol. A fork of GH05TCREW/MetasploitMCP."
 authors = [
     "GH05TCREW <harmasic@gmail.com>",
