@@ -5736,9 +5736,19 @@ async def check_port_available(port: int, host: str = "0.0.0.0") -> Tuple[bool, 
                     f"Port {port} in use by connection: {conn.status} "
                     f"local={conn.laddr} remote={conn.raddr}"
                 )
+                # Name the remedy. The common cause is this server's own
+                # handler from a previous exploit attempt that never produced a
+                # session: the job stays up holding the port, so the obvious
+                # retry -- same module, same LPORT -- fails for a reason that
+                # looks unrelated to the exploit. Observed live: three
+                # run_exploit calls, the middle one lost entirely to this.
                 return (
                     False,
-                    f"Port {port} is already in use by connection: {conn.status} local={conn.laddr} remote={conn.raddr}",
+                    f"Port {port} is already in use by connection: {conn.status} "
+                    f"local={conn.laddr} remote={conn.raddr}. "
+                    f"If this is a handler left over from an earlier attempt, free it with "
+                    f"stop_job (or kill_all_handler_jobs) and retry, or pass a different "
+                    f"LPORT from your allocated range.",
                 )
     except (psutil.AccessDenied, psutil.NoSuchProcess, OSError) as e:
         # If psutil fails (permission issues), fall through to socket check
