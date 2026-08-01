@@ -2180,8 +2180,29 @@ async def _execute_module_rpc(
                 message += f" Session {found_session_id} created."
             else:
                 message += " No session detected within timeout."
+                # ForceExploit is only injected when the module DECLARES it as a
+                # valid option, so this branch is reached both when AutoCheck
+                # really did block and when the module cannot honour ForceExploit
+                # at all -- where the old advice was impossible to follow and
+                # pointed away from the real problem. Observed live: three
+                # attempts against drupal_restws_exec, force_exploit=true passed
+                # explicitly, the same "retry with ForceExploit" hint every time,
+                # and the actual issue was module choice -- the box runs Drupal 7
+                # but not the RESTful Web Services module that exploit targets.
                 if not bool(module_options.get("ForceExploit", False)):
-                    message += " If AutoCheck blocked exploitation, retry with ForceExploit=true (or set force_exploit=True)."
+                    message += (
+                        " If AutoCheck blocked exploitation, retry with ForceExploit=true"
+                        " (or set force_exploit=True). If this module does not support"
+                        " ForceExploit, or you already passed it, the likelier"
+                        " explanation is that the target is not vulnerable to THIS"
+                        " module — pick a different one rather than retrying."
+                    )
+                else:
+                    message += (
+                        " ForceExploit was already applied, so AutoCheck did not block"
+                        " this: the target is most likely not vulnerable to this module."
+                        " Pick a different module rather than retrying."
+                    )
                 status = "warning"  # Indicate job started but session didn't appear
 
                 # If there's a job ID and a payload LPORT set, kill the job
